@@ -31,7 +31,15 @@
     "mock-engine.js",
     "gm-engine.js",
     "player-modal.js",
-    "rookie-data.js"
+    "rookie-data.js",
+    "startsit-engine.js",
+    "weekly-proj.js",
+    "nfl-context.js",
+    "matchup.js",
+    "player-value.js",
+    "draft-gameplan.js",
+    "alex-voice.js",
+    "gm-mode.js"
   ],
   "data": [
     "draft-war-room/player.csv",
