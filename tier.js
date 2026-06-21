@@ -43,6 +43,7 @@ const FEATURES = {
   STARTSIT_DEPTH:     'startsit_depth',     // Lineup depth: floor/ceiling bands, full bench upgrades, matchup hero
   LEAGUE_CALENDAR:    'league_calendar',    // Key dates, deadlines, milestones, custom events
   LEAGUE_HISTORY:     'league_history',     // Champions timeline + all-time records
+  ANALYTICS_DEPTH:    'analytics_depth',    // Command-center dashboards (preset KPI analytics)
 
   // Legacy string keys used by pre-existing code — preserved for compat
   AI_UNLIMITED:       'ai-unlimited',       // ai-dispatch.js
@@ -60,6 +61,7 @@ const _TRIAL_FEATURES = new Set([
   FEATURES.STARTSIT_DEPTH,
   FEATURES.LEAGUE_CALENDAR,
   FEATURES.LEAGUE_HISTORY,
+  FEATURES.ANALYTICS_DEPTH,
   FEATURES.UNLIMITED_CHAT,
   FEATURES.AI_UNLIMITED,
   FEATURES.TRADE_CALC,
@@ -206,6 +208,7 @@ const _FEATURE_LABELS = {
   [FEATURES.STARTSIT_DEPTH]:     'Lineup Depth Analysis',
   [FEATURES.LEAGUE_CALENDAR]:    'League Calendar',
   [FEATURES.LEAGUE_HISTORY]:     'League History',
+  [FEATURES.ANALYTICS_DEPTH]:    'Analytics',
   [FEATURES.FIELD_LOG_SYNC]:     'Field Log Sync',
   [FEATURES.UNLIMITED_CHAT]:     'Unlimited AI Chat',
   [FEATURES.WAR_ROOM_CORE]:      'War Room',
@@ -224,6 +227,7 @@ const _FEATURE_DESCS = {
   [FEATURES.STARTSIT_DEPTH]:     'Floor/ceiling projection bands, full bench upgrade ranking, and matchup context for every lineup decision.',
   [FEATURES.LEAGUE_CALENDAR]:    'Your league\'s key dates — draft, trade deadline, playoffs, waivers — plus custom reminders with live countdowns.',
   [FEATURES.LEAGUE_HISTORY]:     'Champions timeline, all-time standings, and career records across every season your league has played.',
+  [FEATURES.ANALYTICS_DEPTH]:    'War Room-depth command-center dashboards: power rankings, competitive tiers, champion blueprint gaps, draft capital, and dynasty trajectory — in preset views.',
   [FEATURES.FIELD_LOG_SYNC]:     'Sync your Field Log decisions to War Room for cross-platform dynasty intelligence.',
   [FEATURES.UNLIMITED_CHAT]:     'Remove the daily message cap and talk to your AI dynasty advisor as much as you need.',
   [FEATURES.WAR_ROOM_CORE]:      'Access the full War Room desktop experience with advanced multi-league analytics.',
