@@ -1,0 +1,41 @@
+{
+  "name": "dhq-shared",
+  "description": "Canonical shared browser engine for War Room + ReconAI. Both apps vendor these at build.",
+  "modules": [
+    "app-config.js",
+    "bug-capture.js",
+    "constants.js",
+    "utils.js",
+    "storage.js",
+    "event-bus.js",
+    "platform-provider.js",
+    "sleeper-api.js",
+    "espn-api.js",
+    "mfl-api.js",
+    "yahoo-api.js",
+    "supabase-client.js",
+    "tier.js",
+    "pick-value-model.js",
+    "dhq-providers.js",
+    "dhq-core.js",
+    "intelligence-context.js",
+    "dhq-engine.js",
+    "nfl-fit.js",
+    "team-assess.js",
+    "analytics-engine.js",
+    "dhq-ai.js",
+    "assistant-tutorial.js",
+    "ai-dispatch.js",
+    "strategy.js",
+    "trade-engine.js",
+    "mock-engine.js",
+    "gm-engine.js",
+    "player-modal.js",
+    "rookie-data.js"
+  ],
+  "data": [
+    "draft-war-room/player.csv",
+    "draft-war-room/player-enrichment.csv",
+    "draft-war-room/data/mock_draft_db.csv"
+  ]
+}
