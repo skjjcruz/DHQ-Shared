@@ -175,15 +175,100 @@ async function _mflGet(url) {
   return res.json();
 }
 
+// ── MFL players-universe cache ───────────────────────────────────
+// TYPE=players&DETAILS=1 is MFL's entire NFL player universe (~900KB) and is
+// identical for every league in a given year — yet it was re-fetched on every
+// league open, and twice per open (app-mount rehydrate + LeagueDetail hydrate),
+// all routed through the Supabase proxy. That ~1MB round-trip dominated MFL load
+// time. Cache it per year in IndexedDB behind a short-lived in-memory layer so
+// the big payload is pulled at most once per TTL. Mirrors sleeper-api's player
+// DB cache; degrades to a plain refetch if IDB is unavailable. Named uniquely
+// (not WrIDB / _sleeperIDB) to avoid a global collision when all three load in
+// the same script scope.
+const _mflIDB = (() => {
+  const DB_NAME = 'reconai-mfl', STORE = 'kv';
+  let _dbPromise = null;
+  function open() {
+    if (_dbPromise) return _dbPromise;
+    _dbPromise = new Promise((resolve, reject) => {
+      if (typeof window.indexedDB === 'undefined') return reject(new Error('indexedDB unavailable'));
+      const req = window.indexedDB.open(DB_NAME, 1);
+      req.onupgradeneeded = () => { const db = req.result; if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE); };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
+    });
+    _dbPromise.catch(() => { _dbPromise = null; }); // allow retry after a failed open
+    return _dbPromise;
+  }
+  return {
+    get(key) {
+      return open().then(db => new Promise((resolve, reject) => {
+        const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(key);
+        req.onsuccess = () => resolve(req.result ?? null);
+        req.onerror = () => reject(req.error);
+      }));
+    },
+    set(key, value) {
+      return open().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).put(value, key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('indexedDB write aborted'));
+      }));
+    },
+  };
+})();
+
+const _MFL_PLAYERS_TTL = 12 * 60 * 60 * 1000; // 12h — the player universe barely moves intraday
+const _mflPlayersMem = {};      // year → { data, ts }
+const _mflPlayersInflight = {}; // year → Promise (dedup concurrent callers within a load)
+
+// Fetch the global MFL player universe for a year, served from cache when warm.
+// The export is league-independent, so we drop L= and key the cache by year
+// only — one entry is reused across every league (and every reopen).
+async function _fetchPlayersCached(year, apiKey) {
+  const mem = _mflPlayersMem[year];
+  if (mem && Date.now() - mem.ts < _MFL_PLAYERS_TTL) return mem.data;
+  if (_mflPlayersInflight[year]) return _mflPlayersInflight[year];
+  const cacheKey = 'mfl_players_' + year;
+  _mflPlayersInflight[year] = (async () => {
+    try {
+      const cached = await _mflIDB.get(cacheKey);
+      if (cached && cached.data && Date.now() - cached.ts < _MFL_PLAYERS_TTL) {
+        _mflPlayersMem[year] = { data: cached.data, ts: cached.ts };
+        return cached.data;
+      }
+    } catch (e) { /* IDB unavailable — fall through to refetch */ }
+    const url = `${MFL_BASE}/${year}/export?TYPE=players&DETAILS=1&JSON=1`
+      + (apiKey ? '&APIKEY=' + encodeURIComponent(apiKey) : '');
+    const data = await _mflGet(url);
+    _mflPlayersMem[year] = { data, ts: Date.now() };
+    // Fire-and-forget persist — never block returning data on the write.
+    _mflIDB.set(cacheKey, { data, ts: Date.now() }).catch(() => {});
+    return data;
+  })();
+  try { return await _mflPlayersInflight[year]; }
+  finally { delete _mflPlayersInflight[year]; }
+}
+
 /**
  * Fetch all data needed to populate window.S.
  * Returns { leagueData, rostersData, playersData }
+ *
+ * Deduped per (leagueId, year): the app-mount MFL rehydrate and the subsequent
+ * LeagueDetail hydrate used to each issue a full 5-call fetch seconds apart. We
+ * stash the assembled payload so the second caller reuses it (see _getStashedRaw,
+ * 5-min TTL) instead of re-hitting the proxy for league/rosters/rules/draft.
  */
 async function fetchLeague(leagueId, year, apiKey) {
+  const stashed = _getStashedRaw(leagueId, year);
+  if (stashed) return stashed;
   const [leagueData, rostersData, playersData, rulesData, draftResultsData] = await Promise.all([
     _mflGet(_mflUrl(year, 'league', leagueId, apiKey)),
     _mflGet(_mflUrl(year, 'rosters', leagueId, apiKey)),
-    _mflGet(_mflUrl(year, 'players', leagueId, apiKey, 'DETAILS=1')),
+    // Player universe — cached per year (the heavy ~1MB payload), not per league.
+    _fetchPlayersCached(year, apiKey),
     // Scoring rules live in their own export — the league export has none.
     // Non-fatal: a rules failure just leaves scoring_settings sparse.
     _mflGet(_mflUrl(year, 'rules', leagueId, apiKey)).catch(() => null),
@@ -193,7 +278,9 @@ async function fetchLeague(leagueId, year, apiKey) {
     // Non-fatal: a draft fetch failure just means no draft signal.
     _mflGet(_mflUrl(year, 'draftResults', leagueId, apiKey)).catch(() => null),
   ]);
-  return { leagueData, rostersData, playersData, rulesData, draftResultsData };
+  const raw = { leagueData, rostersData, playersData, rulesData, draftResultsData };
+  _stashRaw(leagueId, year, raw);
+  return raw;
 }
 
 // ── Data mappers ──────────────────────────────────────────────────
