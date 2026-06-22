@@ -52,27 +52,26 @@ const SleeperProvider = {
   async getDraftPicks(chainEntry) {
     const S = window.App.S || window.S;
     const posMapLocal = p => { if (['DE','DT'].includes(p)) return 'DL'; if (['CB','S'].includes(p)) return 'DB'; return p; };
-    const picks = [];
     const drafts = await fetch(`${SLEEPER_BASE}/league/${chainEntry.id}/drafts`).then(r => r.json()).catch(() => []);
-    for (const d of (drafts || [])) {
-      if (!d.draft_id || d.status !== 'complete') continue;
+    const completed = (drafts || []).filter(d => d.draft_id && d.status === 'complete');
+    // Fetch every completed draft's picks concurrently — was awaited one draft
+    // at a time, serializing the round-trips on the DHQ cold path. Each draft is
+    // independent; flatten in chain order, so output is unchanged.
+    const perDraft = await Promise.all(completed.map(async d => {
       const dpicks = await fetch(`${SLEEPER_BASE}/draft/${d.draft_id}/picks`).then(r => r.ok ? r.json() : []).catch(() => []);
       const rounds = d.settings?.rounds || dpicks.reduce((m, p) => Math.max(m, p.round), 0);
-      if (rounds >= 20) continue; // startup draft
+      if (rounds >= 20) return []; // startup draft
       const veteranCount = dpicks.filter(p => { const pl = S?.players?.[p.player_id]; return pl && (pl.years_exp || 0) >= 2; }).length;
-      if (veteranCount > dpicks.length * 0.5) continue; // startup
-      dpicks.forEach(p => {
-        if (!p.metadata?.position) return;
-        picks.push({
-          season: chainEntry.season, round: p.round, pick_no: p.pick_no,
-          roster_id: p.roster_id, pid: p.player_id,
-          name: (p.metadata.first_name || '') + ' ' + (p.metadata.last_name || ''),
-          pos: posMapLocal(p.metadata.position), rawPos: p.metadata.position,
-          team: p.metadata.team,
-        });
-      });
-    }
-    return picks;
+      if (veteranCount > dpicks.length * 0.5) return []; // startup
+      return dpicks.filter(p => p.metadata?.position).map(p => ({
+        season: chainEntry.season, round: p.round, pick_no: p.pick_no,
+        roster_id: p.roster_id, pid: p.player_id,
+        name: (p.metadata.first_name || '') + ' ' + (p.metadata.last_name || ''),
+        pos: posMapLocal(p.metadata.position), rawPos: p.metadata.position,
+        team: p.metadata.team,
+      }));
+    }));
+    return perDraft.flat();
   },
 
   async getTransactions(chainEntry, currentSeason) {
