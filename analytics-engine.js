@@ -84,6 +84,13 @@ function identifyWinners(rosters, leagueHistory) {
   const ownerProfiles = LI.ownerProfiles || {};
   const playerScores = LI.playerScores || {};
 
+  // League-average team DHQ is invariant across owners — compute it ONCE rather
+  // than re-summing every roster's every player inside the per-owner loop (was
+  // O(teams²·players)).
+  const avgDHQ = rosters.length
+    ? rosters.reduce((s, r) => s + (r.players || []).reduce((ps, pid) => ps + (playerScores[pid] || 0), 0), 0) / rosters.length
+    : 0;
+
   Object.entries(ownerProfiles).forEach(([rid, prof]) => {
     const ridNum = parseInt(rid);
     if (result.winners.has(ridNum) || result.losers.has(ridNum)) return;
@@ -91,9 +98,6 @@ function identifyWinners(rosters, leagueHistory) {
     const roster = rosters.find(r => r.roster_id === ridNum);
     if (!roster) return;
     const totalDHQ = (roster.players || []).reduce((s, pid) => s + (playerScores[pid] || 0), 0);
-    const avgDHQ = rosters.reduce((s, r) => {
-      return s + (r.players || []).reduce((ps, pid) => ps + (playerScores[pid] || 0), 0);
-    }, 0) / rosters.length;
     if (wonMore && totalDHQ > avgDHQ * 1.1) {
       result.winners.add(ridNum);
       result.winnerSeasons[ridNum] = (result.winnerSeasons[ridNum] || 0) + 1;
@@ -560,6 +564,12 @@ function projectRoster(rosterId, yearsAhead) {
   // Estimate draft pick value added per year (avg of mid-round picks)
   const draftPickBoost = (LI.hitRateByRound?.[1]?.rate || 40) > 0 ? 2500 : 1500;
 
+  // League-average team DHQ is the same every projection year — compute once
+  // instead of re-summing all rosters' players inside the year loop below.
+  const avgLeagueDHQ = (S.rosters || []).reduce((s, r) => {
+    return s + (r.players || []).reduce((ps, pid) => ps + (playerScores[pid] || 0), 0);
+  }, 0) / totalTeams;
+
   const projections = [];
   for (let yr = 1; yr <= (yearsAhead || 5); yr++) {
     let projectedTotal = 0;
@@ -607,9 +617,6 @@ function projectRoster(rosterId, yearsAhead) {
     projectedTotal += draftPickBoost * yr * 0.5; // diminishing certainty on future picks
 
     const projectedHealth = players.length > 0 ? Math.round((healthyCount / players.length) * 100) : 0;
-    const avgLeagueDHQ = S.rosters.reduce((s, r) => {
-      return s + (r.players || []).reduce((ps, pid) => ps + (playerScores[pid] || 0), 0);
-    }, 0) / totalTeams;
 
     let tier;
     if (projectedTotal >= avgLeagueDHQ * 1.2) tier = 'Contender';

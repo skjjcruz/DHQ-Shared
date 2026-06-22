@@ -125,21 +125,25 @@ window.App = window.App || {};
     const nflStarterSet = {};
     const scoreMap = window.App?.LI?.playerScores || window.LI?.playerScores || null;
     const sourceIds = scoreMap ? Object.keys(scoreMap) : Object.keys(players || {});
+    // Single pass over the source list, bucketing by position — was 9 full scans
+    // (one per DEPTH_POSITION), each re-walking the whole ~2k-12k list and re-
+    // sorting. Eligibility/scoring/sort/slice are identical; just hoisted.
+    const byPos = {};
+    DEPTH_POSITIONS.forEach(pos => { byPos[pos] = []; });
+    for (const pid of sourceIds) {
+      const p = players[pid];
+      if (!p || !p.team) continue; // skip missing / released-cut
+      const bucket = byPos[normPos(p.position)];
+      if (!bucket) continue;       // not a depth position we track
+      // Prefer dynasty value; fall back to season stats
+      const val = scoreMap?.[pid] || getDynastyValue(pid);
+      const pts = val > 0 ? val : (playerStats?.[pid]?.seasonTotal || playerStats?.[pid]?.prevTotal || 0);
+      if (pts > 0) bucket.push({ pid, pts });
+    }
     DEPTH_POSITIONS.forEach(pos => {
       const poolSize = pool[pos] || 32;
-      const allAtPos = [];
-      sourceIds.forEach(pid => {
-        const p = players[pid];
-        if (!p) return;
-        if (normPos(p.position) !== pos) return;
-        if (!p.team) return; // skip released/cut
-        // Prefer dynasty value; fall back to season stats
-        const val = scoreMap?.[pid] || getDynastyValue(pid);
-        const pts = val > 0 ? val : (playerStats?.[pid]?.seasonTotal || playerStats?.[pid]?.prevTotal || 0);
-        if (pts > 0) allAtPos.push({ pid, pts });
-      });
-      allAtPos.sort((a, b) => b.pts - a.pts);
-      nflStarterSet[pos] = new Set(allAtPos.slice(0, poolSize).map(p => p.pid));
+      byPos[pos].sort((a, b) => b.pts - a.pts);
+      nflStarterSet[pos] = new Set(byPos[pos].slice(0, poolSize).map(p => p.pid));
     });
     return nflStarterSet;
   }
@@ -239,28 +243,42 @@ window.App = window.App || {};
     const allTP = tradedPicks || [];
     const result = {};
 
+    // Index traded picks ONCE instead of scanning allTP with .find + .filter for
+    // every (roster × year × round) cell. A pick only matters when it changed
+    // hands (owner_id !== roster_id) — that single guard feeds both lookups:
+    //   awayKeys:     season|round|roster_id  → this owner dealt the pick away
+    //   acquiredByKey season|round|owner_id   → [originalOwnerRid, ...] acquired
+    // Rounds are matched strictly (=== a number) just as before, so non-numeric
+    // rounds (which the old === never matched) are skipped here too.
+    const awayKeys = new Set();
+    const acquiredByKey = new Map();
+    for (const p of allTP) {
+      if (p.owner_id === p.roster_id) continue;
+      if (typeof p.round !== 'number') continue;
+      const season = parseInt(p.season);
+      awayKeys.add(season + '|' + p.round + '|' + p.roster_id);
+      const k = season + '|' + p.round + '|' + p.owner_id;
+      let list = acquiredByKey.get(k);
+      if (!list) { list = []; acquiredByKey.set(k, list); }
+      list.push(p.roster_id);
+    }
+
     (rosters || []).forEach(r => {
       const rid = r.roster_id;
       result[rid] = [];
       years.forEach(yr => {
         for (let rd = 1; rd <= draftRounds; rd++) {
-          // Check if this pick was traded away
-          const tradedAway = allTP.find(p =>
-            parseInt(p.season) === yr && p.round === rd &&
-            p.roster_id === rid && p.owner_id !== rid
-          );
-          if (!tradedAway) {
-            // Own original pick
+          // Own original pick — unless it was dealt away
+          if (!awayKeys.has(yr + '|' + rd + '|' + rid)) {
             result[rid].push({ year: yr, round: rd, originalOwnerRid: rid });
           }
-          // Check for acquired picks
-          const acquired = allTP.filter(p =>
-            parseInt(p.season) === yr && p.round === rd &&
-            p.owner_id === rid && p.roster_id !== rid
-          );
-          acquired.forEach(p => {
-            result[rid].push({ year: yr, round: rd, originalOwnerRid: p.roster_id });
-          });
+          // Acquired picks for this slot
+          const acq = acquiredByKey.get(yr + '|' + rd + '|' + rid);
+          if (acq) {
+            for (const originalOwnerRid of acq) {
+              result[rid].push({ year: yr, round: rd, originalOwnerRid });
+            }
+          }
         }
       });
     });
@@ -519,12 +537,37 @@ window.App = window.App || {};
   /**
    * Build NFL starter set from War Room Scout globals.
    */
+  // ── Memoization for the FromGlobal wrappers ──────────────────────
+  // assessAllTeams rebuilds the NFL starter set, picks-by-owner, and the
+  // league-median weekly target, then assesses every roster — all O(teams²·
+  // players)-ish. The FromGlobal wrappers were re-running ALL of it on each
+  // call: ReconAI's League Intel panel calls them ~4× per render and the Trade
+  // Builder hits the baseline assessment on every asset toggle. Memoize on a
+  // cheap signature of the inputs that actually change an assessment: the
+  // league, the LI score build, traded-pick count, and each roster's player set
+  // (so a 1-for-1 trade — which leaves counts unchanged — still invalidates).
+  let _assessCache = { sig: null, all: null, byId: null };
+  let _starterSetCache = { sig: null, set: null };
+
+  function _assessSig() {
+    const S = window.S || window.App?.S || {};
+    const LI = window.App?.LI || window.LI || {};
+    const rosters = S.rosters || [];
+    let fp = '';
+    for (const r of rosters) fp += r.roster_id + ':' + ((r.players || []).join('.')) + ';';
+    return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|tp' + ((S.tradedPicks || []).length) + '|' + fp;
+  }
+
   function buildNflStarterSetFromGlobal() {
     const S = window.S || window.App?.S;
     if (!S?.players) return {};
+    const sig = _assessSig();
+    if (_starterSetCache.sig === sig && _starterSetCache.set) return _starterSetCache.set;
     const totalTeams = (S.rosters || []).length;
     const nflStarterPool = buildNflStarterPool(totalTeams);
-    return buildNflStarterSet(S.players, S.playerStats, nflStarterPool);
+    const set = buildNflStarterSet(S.players, S.playerStats, nflStarterPool);
+    _starterSetCache = { sig, set };
+    return set;
   }
 
   /**
@@ -534,40 +577,32 @@ window.App = window.App || {};
   function assessAllTeamsFromGlobal() {
     const S = window.S || window.App?.S;
     if (!S?.rosters?.length) return [];
+    const sig = _assessSig();
+    if (_assessCache.sig === sig && _assessCache.all) return _assessCache.all;
     const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);
-    return assessAllTeams(S.rosters, S.players, S.playerStats, league, S.leagueUsers, S.tradedPicks);
+    const all = assessAllTeams(S.rosters, S.players, S.playerStats, league, S.leagueUsers, S.tradedPicks);
+    const byId = new Map(all.map(a => [a.rosterId, a]));
+    _assessCache = { sig, all, byId };
+    return all;
   }
 
   /**
    * Assess a single team by roster ID using War Room Scout globals.
+   * Served from the memoized all-teams pass — the per-roster inputs (starter
+   * set, picks, weekly target) are identical, so the single-team result equals
+   * that roster's entry in assessAllTeams. Avoids rebuilding the league-wide
+   * intermediates on every call.
    * @param {number} rosterId - the roster_id to assess
    * @returns {Object|null}   - assessment object or null
    */
   function assessTeamFromGlobal(rosterId) {
     const S = window.S || window.App?.S;
     if (!S?.rosters?.length) return null;
-    const roster = S.rosters.find(r => r.roster_id === rosterId);
-    if (!roster) return null;
-    const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);
-    const rosterPositions = league?.roster_positions || [];
-    const totalTeams = (S.rosters || []).length;
-    const nflStarterPool = buildNflStarterPool(totalTeams);
-    const nflStarterSet = buildNflStarterSet(S.players, S.playerStats, nflStarterPool);
-    const picksByOwner  = buildPicksByOwner(S.rosters, league, S.tradedPicks);
-    const ownerPicks = picksByOwner[rosterId] || [];
-
-    // Compute WEEKLY_TARGET from league data — median of all teams' optimal PPG
-    const allPPGs = (S.rosters || []).map(r => calcOptimalPPG(r.players || [], S.players, S.playerStats, rosterPositions)).filter(v => v > 0);
-    const WEEKLY_TARGET_DYN = allPPGs.length ? allPPGs.sort((a,b) => a-b)[Math.floor(allPPGs.length/2)] * 1.05 : 150;
-
-    const dynamicConfig = {
-      idealRoster: buildIdealRoster(rosterPositions),
-      minStarterQuality: buildMinStarterQuality(rosterPositions),
-      posWeights: buildPosWeights(rosterPositions),
-      weeklyTarget: WEEKLY_TARGET_DYN,
-    };
-
-    return assessTeam(roster, S.players, S.playerStats, league, S.leagueUsers, nflStarterSet, ownerPicks, S.rosters, dynamicConfig);
+    const sig = _assessSig();
+    if (!(_assessCache.sig === sig && _assessCache.byId)) {
+      assessAllTeamsFromGlobal(); // (re)builds and caches the full pass
+    }
+    return (_assessCache.byId && _assessCache.byId.get(rosterId)) || null;
   }
 
   // ─────────────────────────────────────────────────────────────

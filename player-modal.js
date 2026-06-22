@@ -203,25 +203,19 @@ async function _fwFetchCareerStats(pid, currentYear, yrsExp) {
   const results = {};
   const SLEEPER_BASE = 'https://api.sleeper.app/v1';
 
+  // Pull each season's full stats map from the shared IndexedDB-backed cache so
+  // we reuse the blobs loadLeagueIntel/loadRosterStats already fetched instead of
+  // re-downloading multi-MB-per-year just to read one player. (Previously this
+  // wrote sessionStorage 'fw_stats_{yr}' with a {data,ts} shape that collided
+  // with fetchSeasonStats' bare-JSON write under the same key.) Falls back to a
+  // raw fetch if the shared API isn't loaded.
   await Promise.all(years.map(async yr => {
-    const cacheKey = `fw_stats_${yr}`;
     let allStats;
     try {
-      const cached = sessionStorage.getItem(cacheKey);
-      if (cached) {
-        const d = JSON.parse(cached);
-        if (Date.now() - d.ts < 7200000) { allStats = d.data; }
-      }
+      allStats = window.Sleeper?.fetchSeasonStats
+        ? await window.Sleeper.fetchSeasonStats(yr)
+        : await fetch(`${SLEEPER_BASE}/stats/nfl/regular/${yr}`).then(r => r.ok ? r.json() : null);
     } catch(e) {}
-    if (!allStats) {
-      try {
-        const resp = await fetch(`${SLEEPER_BASE}/stats/nfl/regular/${yr}`);
-        if (resp.ok) {
-          allStats = await resp.json();
-          try { sessionStorage.setItem(cacheKey, JSON.stringify({ data: allStats, ts: Date.now() })); } catch(e) {}
-        }
-      } catch(e) {}
-    }
     if (allStats && allStats[pid]) {
       results[yr] = allStats[pid];
     }

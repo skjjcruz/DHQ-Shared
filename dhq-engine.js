@@ -649,6 +649,10 @@ async function loadLeagueIntel(){
   const pPos=window.App.pPos||window.pPos||(id=>S.players?.[id]?.position||'');
   const pAge=window.App.pAge||window.pAge||(id=>S.players?.[id]?.age||'');
   const sf=window.App.sf||window.sf||window.Sleeper?.sleeperFetch||(path=>fetch('https://api.sleeper.app/v1'+path).then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.json()}));
+  // Season stats via the shared IndexedDB-backed cache (12h-ish TTL, immutable
+  // past seasons) so 5 years of multi-MB blobs aren't re-downloaded on every
+  // league open. Falls back to raw sf if the cached API isn't loaded.
+  const sfStats=window.Sleeper?.fetchSeasonStats||(yr=>sf('/stats/nfl/regular/'+yr).catch(()=>({})));
   const SLEEPER=window.App.SLEEPER||window.SLEEPER||'https://api.sleeper.app/v1';
   try{
   if(loadLICache()){window._liLoading=false;return;}
@@ -731,7 +735,7 @@ async function loadLeagueIntel(){
       // Stats always fresh (universal — Sleeper stats API works for all platforms)
       seasonStatsRaw={};
       await Promise.all(uniqueYears.map(async yr=>{
-        seasonStatsRaw[yr]=await sf(`/stats/nfl/regular/${yr}`).catch(()=>({}));
+        seasonStatsRaw[yr]=await sfStats(yr).catch(()=>({}));
       }));
       console.log(`DHQ FAST PATH (${platform}): cached chain(${chain.length}), drafts(${allDraftPicks.length}), faab(${faabTxns.length}), trades(${tradeTxns.length}) | fresh stats in ${((performance.now()-t0)/1000).toFixed(1)}s`);
 
@@ -744,7 +748,7 @@ async function loadLeagueIntel(){
         chain=[{id:S.currentLeagueId,season:S.season}];
         allDraftPicks=[];draftMeta=[];faabTxns=[];tradeTxns=[];bracketData={};leagueUsersHistory={};
         seasonStatsRaw={};
-        await Promise.all(uniqueYears.map(async yr=>{seasonStatsRaw[yr]=await sf(`/stats/nfl/regular/${yr}`).catch(()=>({}));}));
+        await Promise.all(uniqueYears.map(async yr=>{seasonStatsRaw[yr]=await sfStats(yr).catch(()=>({}));}));
       }else{
         // Step 1: League chain
         chain=await provider.getLeagueChain(S.currentLeagueId,curSeason);
@@ -775,7 +779,7 @@ async function loadLeagueIntel(){
 
         // Stats (universal — Sleeper stats API)
         fetchPromises.push(Promise.all(uniqueYears.map(async yr=>{
-          seasonStatsRaw[yr]=await sf(`/stats/nfl/regular/${yr}`).catch(()=>({}));
+          seasonStatsRaw[yr]=await sfStats(yr).catch(()=>({}));
         })));
 
         // Transactions (trades + FAAB via provider)
@@ -1144,6 +1148,26 @@ async function loadLeagueIntel(){
 	    const opportunityMap=_dhqBuildOpportunityMap(S,playerSeasons,posMapLocal);
 
 	    // Score all players with recent production
+	    // Per-position PPG ladder, built ONCE (was rebuilt + sorted per player
+	    // inside the scoring map → O(n²·log n)). rankByPid.get(pid) → posRank,
+	    // total → posTotal. Mirrors the old inline allPosPPG exactly: rank by
+	    // current-or-prior-season avg, counting only players with a curSeason or
+	    // curSeason-1 entry.
+	    const _posRankByPos={};
+	    {
+	      const _byPos={};
+	      Object.entries(playerSeasons).forEach(([pid2,pps])=>{
+	        if(!(pps.seasons[curSeason]||pps.seasons[curSeason-1]))return;
+	        (_byPos[pps.pos]||(_byPos[pps.pos]=[])).push({pid:pid2,ppg:pps.seasons[curSeason]?.avg||pps.seasons[curSeason-1]?.avg||0});
+	      });
+	      Object.keys(_byPos).forEach(pos2=>{
+	        const arr=_byPos[pos2].sort((a,b)=>b.ppg-a.ppg);
+	        const rankByPid=new Map();
+	        arr.forEach((e,i)=>rankByPid.set(e.pid,i+1));
+	        _posRankByPos[pos2]={rankByPid,total:arr.length};
+	      });
+	    }
+
 	    const recentPlayers=Object.entries(playerSeasons)
 	      .filter(([pid,ps])=>{
 	        if(!(ps.seasons[curSeason]||ps.seasons[curSeason-1]||ps.seasons[curSeason-2]))return false;
@@ -1337,12 +1361,12 @@ async function loadLeagueIntel(){
         }
 
         // F) Elite production premium — BIGGER gaps between tiers
-        const allPosPPG=Object.entries(playerSeasons)
-          .filter(([,pps])=>pps.pos===pos&&(pps.seasons[curSeason]||pps.seasons[curSeason-1]))
-          .map(([pid2,pps])=>({pid:pid2,ppg:pps.seasons[curSeason]?.avg||pps.seasons[curSeason-1]?.avg||0}))
-          .sort((a,b)=>b.ppg-a.ppg);
-        const posRank=allPosPPG.findIndex(p=>p.pid===pid)+1;
-        const posTotal=allPosPPG.length;
+        // posRank/posTotal come from _posRankByPos, built ONCE before the loop
+        // (below). This used to rebuild + sort the full position ladder per
+        // player → O(n²·log n) over the whole universe; now an O(1) Map lookup.
+        const _prEntry=_posRankByPos[pos];
+        const posRank=(_prEntry&&_prEntry.rankByPid.get(pid))||0;
+        const posTotal=_prEntry?_prEntry.total:0;
 
 	        let _pr=1;
 	        if(posRank>0&&posRank<=3)_pr=ST.posRank.top3; // Top 3: elite tier
