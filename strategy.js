@@ -6,7 +6,7 @@
 
   const DEFAULT_STRATEGY = {
     mode: 'balanced_rebuild',
-    timeline: '2-3yr',
+    timeline: '2_3_years',
     targetPositions: [],
     sellPositions: [],
     sellRules: [],
@@ -30,6 +30,9 @@
 
   function normalizePosition(pos) {
     if (!pos) return '';
+    // Draft picks are a first-class "position" in GM Strategy (target/sell PICKS).
+    // Special-case BEFORE App.normPos so it survives normalization in both apps.
+    if (String(pos).trim().toUpperCase() === 'PICKS') return 'PICKS';
     if (window.App?.normPos) return window.App.normPos(pos) || '';
     const raw = String(pos).trim().toUpperCase();
     if (raw === 'DST' || raw === 'D/ST') return 'DEF';
@@ -40,14 +43,52 @@
     return Array.from(new Set((list || []).map(normalizePosition).filter(Boolean)));
   }
 
+  // Timeline is canonically '1_year' | '2_3_years' | 'dynasty_long' (War Room
+  // vocabulary). Scout's old editor wrote '1yr'/'2-3yr', which silently missed
+  // every canonical branch (gm-mode effects, window-forecast horizon, rookie
+  // draft order). Normalize legacy values so both apps + every consumer converge.
+  const TIMELINE_MAP = {
+    '1yr': '1_year', '1year': '1_year', '1_year': '1_year',
+    '2yr': '2_3_years', '2year': '2_3_years', '2-3yr': '2_3_years',
+    '2_3yr': '2_3_years', '2-3years': '2_3_years', '2_3_years': '2_3_years',
+    'dynasty': 'dynasty_long', 'dynasty_long': 'dynasty_long',
+  };
+  function normalizeTimeline(tl) {
+    if (!tl) return tl;
+    return TIMELINE_MAP[String(tl).trim().toLowerCase()] || tl;
+  }
+
+  // Sell rules may be free-text strings (War Room / Scout editor) OR structured
+  // objects {pos, ageAbove}. Parse either into a canonical {pos, ageAbove} for
+  // checkAlignment matching WITHOUT mutating the stored value.
+  function parseSellRule(rule) {
+    if (rule && typeof rule === 'object') {
+      return { pos: normalizePosition(rule.pos), ageAbove: Number(rule.ageAbove) || 0 };
+    }
+    const text = String(rule || '');
+    // Optional trailing 's' matches plural forms ("Sell aging RBs"); age accepts
+    // 1–2 digits. Group captures the singular position; normalizePosition canonicalizes.
+    const posMatch = text.match(/\b(QB|RB|WR|TE|K|DEF|D\/ST|DST|DL|LB|DB|EDGE|IDP)s?\b/i);
+    const ageMatch = text.match(/age\s*(\d{1,2})/i) || text.match(/\b(\d{1,2})\s*\+/);
+    return {
+      pos: posMatch ? normalizePosition(posMatch[1]) : '',
+      ageAbove: ageMatch ? Number(ageMatch[1]) : 0,
+    };
+  }
+
   function normalizeStrategy(strategy) {
     const normalized = { ...DEFAULT_STRATEGY, ...(strategy || {}) };
+    normalized.timeline = normalizeTimeline(normalized.timeline);
     normalized.targetPositions = normalizePositionList(normalized.targetPositions);
     normalized.sellPositions = normalizePositionList(normalized.sellPositions);
-    normalized.sellRules = (normalized.sellRules || []).map(rule => ({
-      ...rule,
-      pos: normalizePosition(rule?.pos)
-    }));
+    // Preserve the rule's original shape — a free-text string stays a string
+    // (spreading it would corrupt it into a char-indexed object); only structured
+    // {pos,...} objects get their position normalized. checkAlignment parses both.
+    normalized.sellRules = (normalized.sellRules || []).map(rule => {
+      if (typeof rule === 'string') return rule;
+      if (rule && typeof rule === 'object') return { ...rule, pos: normalizePosition(rule.pos) };
+      return rule;
+    }).filter(r => r != null);
     // Reconcile the singular `untouchable` (War Room) with the plural
     // `untouchables` (Scout / this module). Keep BOTH in sync so every consumer
     // — gm-engine, player-modal, ai-chat — sees the same protected-player list
@@ -134,9 +175,11 @@
     if (action.direction === 'sell' && s.sellPositions.includes(position)) {
       score += 2; reasons.push('Sell position');
     }
-    // Check sell rules
+    // Check sell rules — parse each (string or object) to a canonical {pos,ageAbove}
     if (action.direction === 'sell') {
-      const rule = s.sellRules.find(r => r.pos === position && action.playerAge >= r.ageAbove);
+      const rule = (s.sellRules || []).map(parseSellRule).find(r =>
+        r.pos && r.pos === position && (!r.ageAbove || Number(action.playerAge) >= r.ageAbove)
+      );
       if (rule) { score += 1; reasons.push('Matches sell rule'); }
     }
     // Check untouchables
@@ -184,7 +227,7 @@
   }
 
   window.App = window.App || {};
-  window.App.Strategy = { getStrategy, saveStrategy, syncFromRemote, checkAlignment, recordAction, getDrift, hasDrift, clearDrift, DEFAULT_STRATEGY };
+  window.App.Strategy = { getStrategy, saveStrategy, syncFromRemote, checkAlignment, recordAction, getDrift, hasDrift, clearDrift, parseSellRule, DEFAULT_STRATEGY };
   window.GMStrategy = window.App.Strategy;
 
   // ── Module global exports (Vite migration) ─────────────────────
