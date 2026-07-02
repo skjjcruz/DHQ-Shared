@@ -13,6 +13,7 @@ function normPos(pos) {
     if (!pos) return null;
     const raw = String(pos).trim().toUpperCase();
     if (!raw) return null;
+    if (raw === 'PK')                                         return 'K';   // MFL codes kickers as PK
     if (['DB', 'CB', 'S', 'SS', 'FS'].includes(raw))          return 'DB';
     if (['DL', 'DE', 'DT', 'NT', 'IDL', 'EDGE'].includes(raw)) return 'DL';
     if (['LB', 'OLB', 'ILB', 'MLB'].includes(raw))            return 'LB';

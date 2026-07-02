@@ -336,6 +336,18 @@ Be specific about players and decisions discussed.`,
     maxTokens: 500,
     useWebSearch: true,
   },
+
+  // ── START/SIT (Game Day Central coaching note) ─────────────────
+  // Powers Alex's 1-2 sentence game-day briefing at the top of Game Day
+  // Central. Facts (win%, points left on the bench, top upgrade, injuries) are
+  // computed deterministically by the start/sit engine and passed in — the model
+  // only narrates them, never invents numbers. Falls back to a seeded template
+  // client-side when AI is unavailable, so this is purely an upgrade.
+  'start-sit': {
+    system: DHQ_IDENTITY,
+    instructions: `Context is a JSON object with this week's facts {week, winPct, margin, opponent, pointsLeftOnBench, topUpgrade, topUpgradeSlot, injuries[], objective, mode}. Write ONE to TWO punchy sentences of game-day coaching for the GM: whether they're favored (use winPct/opponent), the single most valuable start/sit move if pointsLeftOnBench is meaningful (name topUpgrade and its slot), and any injuries to monitor. Use ONLY the numbers provided — never invent points, ranks, or news. Confident, human, conversational. Plain prose only: no markdown, lists, headers, or sign-off.`,
+    maxTokens: 160,
+  },
 };
 
 // ── Context Builders (Structured JSON — Improvement A) ──────────

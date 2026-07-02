@@ -341,12 +341,17 @@ function mapMFLRoster(franchise, rosterEntries, crosswalk) {
   const starters = [];
   const reserve = [];
   const taxi = [];
+  // Exact per-franchise Sleeper-pid → MFL-id map. The global crosswalk reverse
+  // can collapse collisions to the wrong owner; this preserves the id THIS
+  // franchise actually rosters, for the lineup-write path (submitLineup).
+  const mflPlayerIds = {};
 
   (rosterEntries || []).forEach(entry => {
     const mflId = entry.id;
     if (!mflId) return;
     const pid = (crosswalk && crosswalk[mflId]) ? crosswalk[mflId] : 'mfl_' + mflId;
     players.push(pid);
+    mflPlayerIds[pid] = String(mflId);
     const status = (entry.status || 'ROSTER').toUpperCase();
     if (status === 'INJURED_RESERVE') {
       reserve.push(pid);
@@ -375,6 +380,7 @@ function mapMFLRoster(franchise, rosterEntries, crosswalk) {
     _owner_name: franchise.owner_name || franchise.name || ('Team ' + franchise.id),
     _team_name: franchise.name || ('Team ' + franchise.id),
     _team_abbrev: franchise.abbrev || '',
+    _mflPlayerIds: mflPlayerIds,
   };
 }
 
@@ -1221,6 +1227,136 @@ if (window.App?.Platforms?.register) {
   console.warn('[MFL] platform-provider.js not loaded — provider will not be registered');
 }
 
+// ── Lineup WRITE (set starters) ──────────────────────────────────
+// MFL is the only supported platform with a public lineup-write API. Requires
+// the franchise owner's MFL API key (write scope). Sleeper has no equivalent.
+//
+//   POST /{year}/import?TYPE=lineup&L={league}&W={week}&STARTERS={mflIds}&APIKEY={key}
+//
+// Params live in the query string so a shard 302 that downgrades POST→GET still
+// carries them. Player ids are mapped Sleeper → MFL via the crosswalk.
+
+// Reverse of the mfl→sleeper crosswalk, rebuilt if the crosswalk swaps identity.
+let _reverseCw = null, _reverseCwSrc = null;
+function _reverseCrosswalk() {
+  const cw = _crosswalk || {};
+  if (_reverseCw && _reverseCwSrc === cw) return _reverseCw;
+  const rev = {};
+  for (const mflId in cw) { const sid = cw[mflId]; if (sid != null) rev[String(sid)] = String(mflId); }
+  _reverseCw = rev; _reverseCwSrc = cw;
+  return rev;
+}
+
+// Sleeper player id → MFL player id. Handles crosswalked ids and the
+// 'mfl_<id>' passthrough form used when no Sleeper match exists.
+function sleeperToMflId(pid) {
+  const s = String(pid);
+  if (s.startsWith('mfl_')) return s.slice(4);
+  return _reverseCrosswalk()[s] || null;
+}
+
+function _mflProxyHeaders() {
+  const anonKey = window.App?.CONFIG?.supabaseAnon || window.OD?.CONFIG?.supabaseAnon || window.OD?.SUPABASE_ANON || window.App?.SUPABASE_ANON;
+  const token = window.OD?.getSessionToken?.() || null;
+  const headers = { 'Content-Type': 'application/json' };
+  if (anonKey) { headers['Authorization'] = 'Bearer ' + (token || anonKey); headers['apikey'] = anonKey; headers._anon = anonKey; }
+  return headers;
+}
+
+// POST a myfantasyleague.com URL through the proxy (write). Mirrors _mflGet but
+// tells the proxy to forward as POST, optionally carrying an MFL login cookie.
+async function _mflPost(url, extra) {
+  extra = extra || {};
+  const proxyUrl = _getProxyUrl();
+  const h = _mflProxyHeaders();
+  const anonKey = h._anon; delete h._anon;
+  const parse = (txt) => { try { return txt ? JSON.parse(txt) : {}; } catch (e) { return { raw: txt }; } };
+  if (proxyUrl && anonKey) {
+    const payload = { url, method: 'POST' };
+    if (extra.cookie) payload.cookie = extra.cookie;
+    const res = await fetch(proxyUrl, { method: 'POST', headers: h, body: JSON.stringify(payload) });
+    const data = parse(await res.text());
+    if (!res.ok) throw new Error((data && data.error) || 'MFL proxy error ' + res.status);
+    return data;
+  }
+  const res = await fetch(url, { method: 'POST' });
+  const data = parse(await res.text());
+  if (!res.ok) throw new Error('MFL API error ' + res.status);
+  return data;
+}
+
+// Log in to MFL to obtain a write-scoped session cookie. MFL's lineup import is
+// authorized via cookie (not the API key), so this is the auth path for pushing
+// lineups. The proxy POSTs the credentials as a form body (password never in a
+// URL) and returns the MFL_USER_ID token + the resolved shard host; we keep only
+// the cookie, never the raw password.
+//   → { cookie: 'MFL_USER_ID=…', host: 'wwwNN.myfantasyleague.com', mflUserId }
+async function mflLogin(opts) {
+  opts = opts || {};
+  const { username, password } = opts;
+  const year = opts.year || new Date().getFullYear();
+  if (!username || !password) throw new Error('MFL username and password are required.');
+  const proxyUrl = _getProxyUrl();
+  const h = _mflProxyHeaders();
+  const anonKey = h._anon; delete h._anon;
+  if (!proxyUrl || !anonKey) throw new Error('MFL proxy unavailable — cannot log in.');
+  const loginUrl = `${MFL_BASE}/${year}/login?XML=1`;
+  const form = 'USERNAME=' + encodeURIComponent(username) + '&PASSWORD=' + encodeURIComponent(password) + '&XML=1';
+  const res = await fetch(proxyUrl, { method: 'POST', headers: h, body: JSON.stringify({ url: loginUrl, login: true, form }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'MFL login proxy error ' + res.status);
+  if (!data.ok || !data.mflUserId) throw new Error(data.message || 'MFL login failed — check your username and password.');
+  return { cookie: 'MFL_USER_ID=' + data.mflUserId, host: data.host || null, mflUserId: data.mflUserId };
+}
+
+// Submit a starting lineup to MFL.
+//   { leagueId, year, week, franchiseId, starterIds (Sleeper ids), mflByPid, apiKey }
+// FRANCHISE is sent explicitly (an MFL API key is account-scoped and may own more
+// than one franchise, so we must name the target). mflByPid is the franchise's
+// own pid→MFL-id map (roster._mflPlayerIds) — preferred over the global crosswalk
+// reverse so we submit the exact id THIS franchise rosters.
+async function submitLineup(opts) {
+  opts = opts || {};
+  const { leagueId, year, week, apiKey, franchiseId, mflByPid, cookie, host } = opts;
+  if (!leagueId || !year || !week) throw new Error('Missing league, year, or week.');
+  if (!cookie && !apiKey) throw new Error('Connect your MFL login to push lineups (MFL requires a login cookie for lineup changes).');
+  const resolve = pid => (mflByPid && mflByPid[pid]) || sleeperToMflId(pid);
+  const ids = (opts.starterIds || []).map(resolve).filter(Boolean);
+  if (!ids.length) throw new Error('Could not map any starters to MFL player IDs.');
+  if (ids.length !== (opts.starterIds || []).length) {
+    throw new Error('Some starters could not be matched to MFL players — set this lineup on MFL directly.');
+  }
+  const cleanId = String(leagueId).replace(/#.*$/, '').replace(/\D/g, '');
+  // With cookie auth, POST straight to the login-resolved shard host so there's
+  // no cross-host redirect to strip the Cookie. API-key auth uses the base host.
+  const base = (cookie && host) ? ('https://' + String(host).replace(/^https?:\/\//, '')) : MFL_BASE;
+  let url = `${base}/${year}/import?TYPE=lineup&L=${cleanId}&W=${encodeURIComponent(week)}`
+    + `&STARTERS=${ids.join(',')}&JSON=1`;
+  if (apiKey && !cookie) url += `&APIKEY=${encodeURIComponent(apiKey)}`;
+  if (franchiseId) {
+    // MFL franchise ids are 4-char zero-padded ("0001").
+    const fid = String(franchiseId).replace(/\D/g, '').padStart(4, '0');
+    url += `&FRANCHISE=${encodeURIComponent(fid)}`;
+  }
+  const data = await _mflPost(url, { cookie });
+  // MFL reports hard errors in { error } and the import OUTCOME in { status }.
+  // Do NOT treat "no error key" as success — a soft rejection (locked/invalid
+  // player, past deadline) returns HTTP 200 with a status message. Require an
+  // affirmative confirmation, and surface anything else so we never claim a
+  // rejected write succeeded.
+  if (data && data.error) throw new Error(typeof data.error === 'string' ? data.error : (data.error.$t || 'MFL rejected the lineup.'));
+  const statusMsg = (data && data.status)
+    ? (typeof data.status === 'string' ? data.status : (data.status.$t || ''))
+    : ((data && data.raw) ? String(data.raw) : '');
+  if (/not\s*(saved|set|submitted|import|allow)|invalid|error|denied|fail|could\s*not|unable|deadline|locked|too\s*late|rejected/i.test(statusMsg)) {
+    throw new Error(statusMsg.slice(0, 180) || 'MFL rejected the lineup.');
+  }
+  if (!/success|imported|saved|updated|accepted|submitted|has been|complete|\bok\b/i.test(statusMsg)) {
+    throw new Error('MFL did not confirm the lineup was set — verify on MyFantasyLeague.' + (statusMsg ? ' (' + statusMsg.slice(0, 120) + ')' : ''));
+  }
+  return data;
+}
+
 // ── Expose on window.MFL ──────────────────────────────────────────
 window.MFL = {
   BASE_URL: MFL_BASE,
@@ -1246,6 +1382,11 @@ window.MFL = {
   // Crosswalk
   buildCrosswalk,
   lookupSleeperPlayerId,
+  sleeperToMflId,
+
+  // Lineup write (MFL-only)
+  mflLogin,
+  submitLineup,
 
   // Main connect (legacy — prefer .provider for new code)
   connectLeague,
