@@ -135,6 +135,13 @@ function canAccess(feature) {
   return false;
 }
 
+// ── Scout Pro (the binary free vs paid line) ──────────────────────
+// FREE = bare-bones (DHQ values + manual tools + 3 Alex Q/day, phone-only).
+// PRO = everything the app computes / decides / AI-generates + iPad layout.
+// trial + paid are Pro; free is bare. Everything NEW gates on this; the
+// existing granular canAccess(FEATURE) gates already return false for free.
+function isScoutPro() { return getTier() !== 'free'; }
+
 // ── loadUserTier (async, called once at boot) ─────────────────────
 // Fetches tier from Supabase via OD.loadProfile, caches for fast sync lookups.
 async function loadUserTier() {
@@ -151,6 +158,9 @@ async function loadUserTier() {
   } catch (e) {
     console.warn('[Tier] Failed to load user tier:', e);
   }
+  // Re-apply Scout Pro chrome now that the async tier is resolved (boot ran
+  // before this; a paid user would otherwise flash the free wordmark/layout).
+  try { if (window._applyScoutProChrome) window._applyScoutProChrome(); } catch (_) { /* ignore */ }
 }
 
 function normalizeProductTier(profile) {
@@ -540,6 +550,7 @@ Object.assign(window.App, {
   TRIAL_DAYS,
   FREE_CHAT_DAILY_LIMIT,
   getTier,
+  isScoutPro,
   isTrialActive,
   getRemainingTrialDays,
   canAccess,
@@ -557,6 +568,7 @@ Object.assign(window.App, {
 window.FEATURES                  = FEATURES;
 window.FREE_CHAT_DAILY_LIMIT     = FREE_CHAT_DAILY_LIMIT;
 window.getTier                   = getTier;
+window.isScoutPro                = isScoutPro;
 window.isSandbox                 = isSandbox;
 window.isTrialActive             = isTrialActive;
 window.isTrialExpired            = isTrialExpired;
