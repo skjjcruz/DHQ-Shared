@@ -658,44 +658,116 @@ window.App = window.App || {};
       posSurplus = posCount - Math.max(1, Math.round(slotsNeeded));
     }
 
-    // Rookie stash
-    if (meta.source === 'FC_ROOKIE') return { action: 'STASH', label: 'Stash', reason: 'Incoming rookie — hold and develop', col: 'var(--blue)', bg: 'var(--blueL)' };
+    // Base verdict — the strategy-blind age/value/trend read (unchanged chain).
+    function baseAction() {
+      // Rookie stash
+      if (meta.source === 'FC_ROOKIE') return { action: 'STASH', label: 'Stash', reason: 'Incoming rookie — hold and develop', col: 'var(--blue)', bg: 'var(--blueL)' };
 
-    // Elite cornerstone
-    const _isElite = typeof window.App?.isElitePlayer === 'function' ? window.App.isElitePlayer(pid) : val >= 7000;
-    if (_isElite && peakYrsLeft >= 3) return { action: 'CORE', label: 'Build Around', reason: 'Elite value with ' + peakYrsLeft + ' peak years left', col: 'var(--green)', bg: 'var(--greenL)' };
+      // Elite cornerstone
+      const _isElite = typeof window.App?.isElitePlayer === 'function' ? window.App.isElitePlayer(pid) : val >= 7000;
+      if (_isElite && peakYrsLeft >= 3) return { action: 'CORE', label: 'Build Around', reason: 'Elite value with ' + peakYrsLeft + ' peak years left', col: 'var(--green)', bg: 'var(--greenL)' };
 
-    // Rising buy target
-    if (peakYrsLeft >= 4 && trend >= 10 && !isOwned) return { action: 'BUY', label: 'Buy', reason: 'Trending up (+' + trend + '%) with ' + peakYrsLeft + ' peak years ahead', col: 'var(--green)', bg: 'var(--greenL)' };
-    if (peakYrsLeft >= 4 && trend >= 10 && isOwned) return { action: 'HOLD', label: 'Hold', reason: 'Rising asset — keep and ride the wave', col: 'var(--green)', bg: 'var(--greenL)' };
+      // Rising buy target
+      if (peakYrsLeft >= 4 && trend >= 10 && !isOwned) return { action: 'BUY', label: 'Buy', reason: 'Trending up (+' + trend + '%) with ' + peakYrsLeft + ' peak years ahead', col: 'var(--green)', bg: 'var(--greenL)' };
+      if (peakYrsLeft >= 4 && trend >= 10 && isOwned) return { action: 'HOLD', label: 'Hold', reason: 'Rising asset — keep and ride the wave', col: 'var(--green)', bg: 'var(--greenL)' };
 
-    // Sell high window — near end of peak, still has value
-    if (peakYrsLeft > 0 && peakYrsLeft <= 1 && val >= 3000) return { action: 'SELL_HIGH', label: 'Sell High', reason: '1 peak year left — sell while value holds', col: 'var(--amber)', bg: 'var(--amberL)' };
+      // Sell high window — near end of peak, still has value
+      if (peakYrsLeft > 0 && peakYrsLeft <= 1 && val >= 3000) return { action: 'SELL_HIGH', label: 'Sell High', reason: '1 peak year left — sell while value holds', col: 'var(--amber)', bg: 'var(--amberL)' };
 
-    // Past elite peak but still inside the valuable decline band
-    if (peakYrsLeft <= 0 && valueYrsLeft > 0 && trend <= -10) return { action: 'SELL_HIGH', label: 'Sell High', reason: 'Veteran decline band and production slipping', col: 'var(--amber)', bg: 'var(--amberL)' };
-    if (peakYrsLeft <= 0 && valueYrsLeft > 0) return { action: 'HOLD', label: 'Hold', reason: valueYrsLeft + ' value year' + (valueYrsLeft > 1 ? 's' : '') + ' left in veteran band', col: 'var(--amber)', bg: 'var(--amberL)' };
+      // Past elite peak but still inside the valuable decline band
+      if (peakYrsLeft <= 0 && valueYrsLeft > 0 && trend <= -10) return { action: 'SELL_HIGH', label: 'Sell High', reason: 'Veteran decline band and production slipping', col: 'var(--amber)', bg: 'var(--amberL)' };
+      if (peakYrsLeft <= 0 && valueYrsLeft > 0) return { action: 'HOLD', label: 'Hold', reason: valueYrsLeft + ' value year' + (valueYrsLeft > 1 ? 's' : '') + ' left in veteran band', col: 'var(--amber)', bg: 'var(--amberL)' };
 
-    // Past valuable window
-    if (valueYrsLeft <= 0 && trend <= -10) return { action: 'SELL', label: 'Sell', reason: 'Past value window and declining (' + trend + '%)', col: 'var(--red)', bg: 'var(--redL)' };
-    if (valueYrsLeft <= 0) return { action: 'SELL', label: 'Sell', reason: 'Past value window — trade while value remains', col: 'var(--red)', bg: 'var(--redL)' };
+      // Past valuable window
+      if (valueYrsLeft <= 0 && trend <= -10) return { action: 'SELL', label: 'Sell', reason: 'Past value window and declining (' + trend + '%)', col: 'var(--red)', bg: 'var(--redL)' };
+      if (valueYrsLeft <= 0) return { action: 'SELL', label: 'Sell', reason: 'Past value window — trade while value remains', col: 'var(--red)', bg: 'var(--redL)' };
 
-    // Near peak end with declining trend
-    if (peakYrsLeft <= 2 && trend <= -10) return { action: 'SELL_HIGH', label: 'Sell High', reason: 'Window closing and production declining', col: 'var(--amber)', bg: 'var(--amberL)' };
+      // Near peak end with declining trend
+      if (peakYrsLeft <= 2 && trend <= -10) return { action: 'SELL_HIGH', label: 'Sell High', reason: 'Window closing and production declining', col: 'var(--amber)', bg: 'var(--amberL)' };
 
-    // Solid hold — in peak with good value
-    if (peakYrsLeft >= 2 && val >= 4000) return { action: 'HOLD', label: 'Hold', reason: peakYrsLeft + ' peak years left at starter value', col: 'var(--accent)', bg: 'var(--accentL)' };
+      // Solid hold — in peak with good value
+      if (peakYrsLeft >= 2 && val >= 4000) return { action: 'HOLD', label: 'Hold', reason: peakYrsLeft + ' peak years left at starter value', col: 'var(--accent)', bg: 'var(--accentL)' };
 
-    // Low value stash with upside
-    if (val < 2000 && peakYrsLeft >= 3) return { action: 'STASH', label: 'Stash', reason: 'Low value but ' + peakYrsLeft + ' peak years ahead', col: 'var(--blue)', bg: 'var(--blueL)' };
+      // Low value stash with upside
+      if (val < 2000 && peakYrsLeft >= 3) return { action: 'STASH', label: 'Stash', reason: 'Low value but ' + peakYrsLeft + ' peak years ahead', col: 'var(--blue)', bg: 'var(--blueL)' };
 
-    // Buy candidate (not owned, has peak years)
-    if (!isOwned && peakYrsLeft >= 2 && val < 5000) return { action: 'BUY', label: 'Buy', reason: 'Undervalued with ' + peakYrsLeft + ' peak years remaining', col: 'var(--green)', bg: 'var(--greenL)' };
+      // Buy candidate (not owned, has peak years)
+      if (!isOwned && peakYrsLeft >= 2 && val < 5000) return { action: 'BUY', label: 'Buy', reason: 'Undervalued with ' + peakYrsLeft + ' peak years remaining', col: 'var(--green)', bg: 'var(--greenL)' };
 
-    // Default hold
-    if (peakYrsLeft >= 1) return { action: 'HOLD', label: 'Hold', reason: peakYrsLeft + ' peak year' + (peakYrsLeft > 1 ? 's' : '') + ' remaining', col: 'var(--accent)', bg: 'var(--accentL)' };
+      // Default hold
+      if (peakYrsLeft >= 1) return { action: 'HOLD', label: 'Hold', reason: peakYrsLeft + ' peak year' + (peakYrsLeft > 1 ? 's' : '') + ' remaining', col: 'var(--accent)', bg: 'var(--accentL)' };
 
-    return { action: 'SELL', label: 'Sell', reason: 'Past prime — move for future assets', col: 'var(--red)', bg: 'var(--redL)' };
+      return { action: 'SELL', label: 'Sell', reason: 'Past prime — move for future assets', col: 'var(--red)', bg: 'var(--redL)' };
+    }
+
+    const base = baseAction();
+
+    // ── GM Strategy layer ─────────────────────────────────────────
+    // Shifts the verdict at the SOURCE so every consumer (roster rows,
+    // player quick-card, player modal) converges on one answer. Guarded:
+    // team-assess also runs in embeds where gm-mode.js isn't loaded, and
+    // it stays inert until a strategy has actually been saved. Tier-neutral
+    // at the engine level — render seams keep their own Pro gates. Every
+    // strategy-shifted verdict carries a 'GM plan: …' reason so surfaces
+    // can show WHY the call moved.
+    let gmFx = null;
+    try {
+      if (typeof window.WR?.GmMode?.effects === 'function') {
+        const fx = window.WR.GmMode.effects(S.currentLeagueId);
+        if (fx && fx.hasStrategy) gmFx = fx;
+      }
+    } catch (e) { /* gm-mode optional */ }
+    if (!gmFx) return base;
+
+    const age = meta.age || 0;
+    const posKey = String(pos || '');
+
+    // (a) Untouchable — never advise selling a protected player.
+    if (isOwned && gmFx.untouchable && gmFx.untouchable.has(String(pid))) {
+      if (/^SELL/.test(base.action)) {
+        return { action: 'HOLD', label: 'Hold', reason: 'GM plan: untouchable — shielded from sell calls', col: 'var(--accent)', bg: 'var(--accentL)' };
+      }
+      return base;
+    }
+
+    // (b) Sell steer — sell positions and parsed sell rules flip soft
+    // owned verdicts (Hold/Stash) to Sell. CORE/BUY/SELL* stay as-is.
+    if (isOwned && (base.action === 'HOLD' || base.action === 'STASH')) {
+      if (gmFx.sellPositions && gmFx.sellPositions.has(posKey)) {
+        return { action: 'SELL', label: 'Sell', reason: 'GM plan: ' + posKey + ' is flagged to move', col: 'var(--red)', bg: 'var(--redL)' };
+      }
+      const parseRule = window.GMStrategy && window.GMStrategy.parseSellRule;
+      const ruleHit = (gmFx.sellRules || []).map(r => {
+        try { return parseRule ? parseRule(r) : null; } catch (e) { return null; }
+      }).find(r => r && (r.pos || r.ageAbove) && (!r.pos || r.pos === posKey) && (!r.ageAbove || (age && age >= r.ageAbove)));
+      if (ruleHit) {
+        return { action: 'SELL', label: 'Sell', reason: 'GM plan: sell rule — ' + (ruleHit.pos || posKey) + (ruleHit.ageAbove ? ' age ' + ruleHit.ageAbove + '+' : ''), col: 'var(--red)', bg: 'var(--redL)' };
+      }
+    }
+
+    // (c) Mode shifts — the chosen plan tilts borderline verdicts.
+    if (gmFx.mode === 'rebuild') {
+      // Lower the sell bar for aging / declining veterans.
+      if (isOwned && base.action === 'HOLD' && peakYrsLeft <= 0 && (age >= 27 || trend <= -10)) {
+        return { action: 'SELL_HIGH', label: 'Sell High', reason: 'GM plan: Rebuild — move veteran value while it holds', col: 'var(--amber)', bg: 'var(--amberL)' };
+      }
+      // Upgrade Stash weighting for young, still-cheap holds.
+      if (isOwned && base.action === 'HOLD' && peakYrsLeft >= 3 && val < 4000) {
+        return { action: 'STASH', label: 'Stash', reason: 'GM plan: Rebuild — develop ' + peakYrsLeft + ' peak years of upside', col: 'var(--blue)', bg: 'var(--blueL)' };
+      }
+    } else if (gmFx.mode === 'win_now') {
+      // Proven producers become Buy targets.
+      if (!isOwned && base.action === 'HOLD' && val >= 4000) {
+        return { action: 'BUY', label: 'Buy', reason: 'GM plan: Win Now — proven production upgrades this lineup', col: 'var(--green)', bg: 'var(--greenL)' };
+      }
+      // Far-future development stashes become sell candidates (real rookies
+      // keep their Stash — incoming picks aren't tradeable production yet).
+      if (isOwned && base.action === 'STASH' && meta.source !== 'FC_ROOKIE') {
+        return { action: 'SELL', label: 'Sell', reason: 'GM plan: Win Now — flip developmental stashes for immediate help', col: 'var(--red)', bg: 'var(--redL)' };
+      }
+    }
+
+    return base;
   }
 
   // ─────────────────────────────────────────────────────────────

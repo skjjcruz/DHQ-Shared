@@ -1161,7 +1161,46 @@ function dhqContext(includeOwners) {
   const teamWindow = myAssess?.window || '';
 
   let modeBlock = '[TEAM_MODE]\n';
-  if (tier === 'REBUILDING' || teamWindow === 'REBUILDING') {
+  if (gmPd) {
+    // A committed GM Strategy OWNS the mode: rules derive from the CHOSEN
+    // plan so this block can never contradict [GM_STRATEGY]. The roster
+    // assessment demotes to a one-line reality check when it disagrees.
+    if (gmPd.mode === 'rebuild') {
+      modeBlock += 'Mode: REBUILD (GM-committed strategy)\n';
+      modeBlock += 'Rules:\n';
+      modeBlock += '- ONLY recommend youth (age 25 or younger) and draft picks\n';
+      modeBlock += '- Sell aging veterans (27+ with declining production) for picks/youth\n';
+      modeBlock += '- FAAB: only bid on young upside or emergency injury replacements\n';
+      modeBlock += '- Never recommend "depth" pickups of veterans\n';
+      modeBlock += '- Patience is a strategy — don\'t make moves just to make moves\n';
+    } else if (gmPd.mode === 'win_now') {
+      modeBlock += 'Mode: WIN NOW (GM-committed strategy)\n';
+      modeBlock += 'Rules:\n';
+      modeBlock += '- Recommend proven starters who produce THIS season\n';
+      modeBlock += '- Trade future picks for upgrades at weak spots\n';
+      modeBlock += '- FAAB: bid aggressively on difference-makers who would start\n';
+      modeBlock += '- Don\'t recommend speculative youth projects that won\'t help now\n';
+    } else if (gmPd.mode === 'compete') {
+      modeBlock += 'Mode: COMPETE (GM-committed strategy)\n';
+      modeBlock += 'Rules:\n';
+      modeBlock += '- Balance present and future — favor players aged 24-27 with 3+ peak years left\n';
+      modeBlock += '- Trade aging assets only at peak value; no fire sales\n';
+      modeBlock += '- FAAB: moderate bids on players who upgrade a starting spot\n';
+      modeBlock += '- Never mortgage multiple future firsts for a rental\n';
+    } else {
+      modeBlock += 'Mode: CUSTOM (GM-committed strategy)\n';
+      modeBlock += 'Rules:\n';
+      modeBlock += '- Follow the [GM_STRATEGY] block exactly — aggression, postures, positions, and sell rules as configured\n';
+    }
+    const assessedMode = (tier === 'REBUILDING' || teamWindow === 'REBUILDING') ? 'rebuild'
+      : (tier === 'ELITE' || tier === 'CONTENDER' || teamWindow === 'CONTENDING') ? 'win_now'
+      : '';
+    if (assessedMode && assessedMode !== gmPd.mode) {
+      modeBlock += 'Reality check: roster grades ' + (tier || teamWindow) + ' while the GM has committed to '
+        + String(gmPd.modeLabel || gmPd.mode).toUpperCase()
+        + ' — acknowledge the tension, follow the GM\'s direction.\n';
+    }
+  } else if (tier === 'REBUILDING' || teamWindow === 'REBUILDING') {
     modeBlock += 'Mode: REBUILD\n';
     modeBlock += 'Rules:\n';
     modeBlock += '- ONLY recommend youth (age 25 or younger) and draft picks\n';
