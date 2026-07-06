@@ -89,18 +89,52 @@
     return t;
   }
 
+  // First sentence of a blurb, for one-line summaries. Ends at the first
+  // . ! or ? followed by whitespace/end; whole (trimmed) string if none.
+  function firstSentence(text) {
+    var t = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    var m = t.match(/^[\s\S]*?[.!?](?=\s|$)/);
+    return m ? m[0].trim() : t;
+  }
+
+  // Clamp prose to at most n words; trailing punctuation is dropped and an
+  // ellipsis appended when the cut actually removed something.
+  function clampWords(text, n) {
+    var t = String(text || '').replace(/\s+/g, ' ').trim();
+    if (!t) return '';
+    var words = t.split(' ');
+    if (!(n > 0) || words.length <= n) return t;
+    return words.slice(0, n).join(' ').replace(/[,;:—–-]+$/, '') + '…';
+  }
+
   function getAI() {
     return (typeof window.dhqAI === 'function') ? window.dhqAI : null;
   }
 
   // Is real AI reachable right now? (server session, BYO key, or dev preview)
+  // Free tier reads as "no AI": template-first surfaces keep their seeded
+  // copy and never spend a free user's explicit-ask allowance ambiently.
+  // Fail-open — when tier plumbing isn't loaded (preview/standalone pages),
+  // nothing is blocked.
   function hasAI() {
     try {
+      if (typeof window.isScoutPro === 'function' && !window.isScoutPro()) return false;
       if (!getAI()) return false;
       if (typeof window.hasAnyAI === 'function') return !!window.hasAnyAI(false);
       if (typeof window.hasServerAI === 'function') return !!window.hasServerAI();
       return !!(window.S && window.S.apiKey);
     } catch (e) { return false; }
+  }
+
+  // Predicate for AMBIENT (auto-fired, not user-initiated) AI upgrades:
+  // ambient calls are Pro-only — a free user's daily allowance is reserved
+  // for explicit asks. Kept as its own seam (not just hasAI) so the ambient
+  // policy survives even if the hasAI() free floor is ever relaxed. Same
+  // fail-open shape as hasAI(); deliberately NOT built on canAccess (that
+  // helper is warroom-only and shadow-prone).
+  function hasAmbientAI() {
+    return hasAI() && (typeof window.isScoutPro !== 'function' || window.isScoutPro());
   }
 
   var _cache = new Map();
@@ -161,7 +195,10 @@
     cap: cap,
     joinNatural: joinNatural,
     sanitize: sanitize,
+    firstSentence: firstSentence,
+    clampWords: clampWords,
     hasAI: hasAI,
+    hasAmbientAI: hasAmbientAI,
     enhance: enhance,
     getCached: getCached,
     _cache: _cache,

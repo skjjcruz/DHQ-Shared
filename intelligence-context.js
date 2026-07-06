@@ -711,17 +711,71 @@
     return LEAGUE_TYPE_ALIASES[raw] || raw;
   }
 
+  const LEAGUE_TYPE_OVERRIDE_PREFIX = 'dhq_league_type_override:';
+  const SEASONAL_LEAGUE_TYPES = new Set(['redraft', 'best_ball', 'dfs']);
+
+  function leagueIdFor(leagueOrId) {
+    if (leagueOrId == null) return '';
+    if (typeof leagueOrId === 'object') return String(leagueOrId.league_id || leagueOrId.id || '');
+    return String(leagueOrId);
+  }
+
+  function getLeagueTypeOverride(leagueOrId) {
+    const direct = typeof leagueOrId === 'object' && leagueOrId !== null
+      ? normalizeLeagueType(leagueOrId._dhq_type_override)
+      : '';
+    if (direct) return direct;
+    const leagueId = leagueIdFor(leagueOrId);
+    if (!leagueId) return '';
+    try {
+      return normalizeLeagueType(localStorage.getItem(LEAGUE_TYPE_OVERRIDE_PREFIX + leagueId));
+    } catch (err) {
+      return '';
+    }
+  }
+
+  function setLeagueTypeOverride(leagueOrId, type) {
+    const leagueId = leagueIdFor(leagueOrId);
+    if (!leagueId) return false;
+    try {
+      const normalized = normalizeLeagueType(type);
+      if (normalized) localStorage.setItem(LEAGUE_TYPE_OVERRIDE_PREFIX + leagueId, normalized);
+      else localStorage.removeItem(LEAGUE_TYPE_OVERRIDE_PREFIX + leagueId);
+      return true;
+    } catch (err) {
+      return false;
+    }
+  }
+
   function detectLeagueType(league, fallback) {
+    const override = getLeagueTypeOverride(league);
+    if (override) return override;
     const explicit = normalizeLeagueType(firstNonNull([
       league?.type,
       league?.league_type,
       league?.settings?.type,
+      league?.metadata?.type,
+      league?.metadata?.league_type,
       fallback,
     ], ''));
     if (explicit) return explicit;
     if (league?.metadata?.keeper_count || league?.settings?.keeper_count) return 'keeper';
     if (Array.isArray(league?.draft_order) && league.draft_order.length) return 'dynasty';
     return 'unknown';
+  }
+
+  function isDynastyFormat(league) {
+    return detectLeagueType(league) === 'dynasty';
+  }
+
+  function isSeasonalFormat(league) {
+    return SEASONAL_LEAGUE_TYPES.has(detectLeagueType(league));
+  }
+
+  // POLICY (fail open): only a detected dynasty league hides redraft surfaces;
+  // keeper and unknown keep everything.
+  function allowRedraftFeatures(league) {
+    return !isDynastyFormat(league);
   }
 
   function buildMarketCompatibility(profile) {
@@ -2065,6 +2119,12 @@
     buildFantasyCalcSnapshot,
     fetchFantasyCalcSnapshot,
     normalizeScoring,
+    detectLeagueType,
+    isDynastyFormat,
+    isSeasonalFormat,
+    allowRedraftFeatures,
+    getLeagueTypeOverride,
+    setLeagueTypeOverride,
     buildLeagueProfile,
     buildMarketCompatibility,
     buildFormatBadges,

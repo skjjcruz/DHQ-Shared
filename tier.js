@@ -149,9 +149,12 @@ async function loadUserTier() {
     if (window.OD?.loadProfile) {
       const profile = await window.OD.loadProfile();
       if (profile?.tier) {
-        const tier = ['scout', 'recon_ai', 'dynast_hq', 'war_room', 'warroom', 'pro', 'commissioner'].includes(profile.tier)
-          ? 'paid' : 'free';
-        window.App._userTier = tier;
+        const paid = ['scout', 'recon_ai', 'dynast_hq', 'war_room', 'warroom', 'pro', 'commissioner'].includes(profile.tier);
+        // A profile without a paid tier must not clobber an active local trial
+        // (trial = Pro, owner ruling 2026-07-05): leave _userTier unset so
+        // getTier() keeps resolving the live trial window and expiry still bites.
+        if (paid) window.App._userTier = 'paid';
+        else if (!isTrialActive()) window.App._userTier = 'free';
         window.App._productTier = normalizeProductTier(profile);
       }
     }
@@ -505,8 +508,13 @@ function initTrialSystem() {
   renderTrialBanner();
   updateTrialSettingsSection();
   if (_shouldShowExpirationModal()) {
-    DhqStorage.setStr(STORAGE_KEYS.TRIAL_EXPIRED_SEEN, '1');
-    setTimeout(renderExpirationModal, 500); // let app render first
+    setTimeout(() => { // let app render first
+      // Stamp only when this page can actually show the modal — pages without
+      // the modal DOM (warroom standalones) must not consume the one-time flag.
+      if (!document.getElementById('trial-expired-modal')) return;
+      DhqStorage.setStr(STORAGE_KEYS.TRIAL_EXPIRED_SEEN, '1');
+      renderExpirationModal();
+    }, 500);
   }
 }
 

@@ -454,13 +454,24 @@ function mapMFLSettings(leagueRaw, leagueId, year, rulesRaw) {
   // every other platform).
   const playerCopies = Math.max(1, parseInt(lg.rostersPerPlayer || lg.rosters_per_player || 1) || 1);
 
+  // ── League type ──
+  // Dynasty-first default, detection-first posture: MFL's TYPE=league export
+  // has no explicit dynasty value, and its keeperType vocabulary is unverified
+  // against a real payload — a live dynasty league may report 'keeper' (or
+  // 'none' with the module off), so deriving settings.type from it here could
+  // silently re-type real leagues and shift value calibration. The raw field
+  // rides along as _mflKeeperType below; flip to a derived type only after
+  // verifying the owner's MLS TYPE=league payload. Until then the per-league
+  // override (intelligence-context.js setLeagueTypeOverride) is the correction
+  // seam for mis-typed MFL leagues.
+
   return {
     league_id: 'mfl_' + leagueId + '_' + year,
     name: lg.name || ('MFL League ' + leagueId),
     total_rosters: franchises.length || parseInt(lg.franchises?.count || 12),
     season: String(year),
     status: 'in_season', // overwritten by mapToSleeperState from the draft state
-    settings: { type: 2, player_copies: playerCopies }, // MFL is dynasty-first
+    settings: { type: 2, player_copies: playerCopies },
     scoring_settings,
     roster_positions,
     avatar: null,
@@ -474,6 +485,7 @@ function mapMFLSettings(leagueRaw, leagueId, year, rulesRaw) {
     _mflDraftLimitHours: lg.draftLimitHours || '',
     _mflDraftKind: lg.draft_kind || '',
     _mflLockout: lg.lockout || '',
+    _mflKeeperType: lg.keeperType || lg.keeper_type || '',
   };
 }
 
