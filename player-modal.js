@@ -395,9 +395,14 @@ function openFWPlayerModal(playerIdOrObj, playersData, statsData, scoringSetting
   // ── Name ──
   _fwSet('fwpm-name','textContent',name);
 
+  // Scout Pro gate — fail-open (missing tier.js = Pro). Free browses raw
+  // identity/value/stats; the dynasty-insight read and the Buy/Sell trade
+  // verdict are Pro, mirroring reconai's app-local modal (player-modal.js).
+  const _pmPro = typeof window.isScoutPro !== 'function' || window.isScoutPro();
+
   // ── Insight blurb ──
   const insightEl = document.getElementById('fwpm-insight');
-  if (meta) {
+  if (meta && _pmPro) {
     const yrsPast = Math.max(0, age - pk.hi);
     const yrsExp = exp;
     let blurb = '', blurbCol = _wr.amber;
@@ -610,18 +615,28 @@ function openFWPlayerModal(playerIdOrObj, playersData, statsData, scoringSetting
   // ── Right panel: Trade Profile for ALL positions (unified layout) ──
   const rightPanel = document.getElementById('fwpm-right');
   if (rightPanel) {
-    const pa = (typeof getPlayerAction === 'function') ? getPlayerAction(pid) : { label: 'Hold', col: _wr.gold, reason: '' };
-    const recCol = pa.col || _wr.gold;
     const tpTrend = trend >= 15 ? '+'+trend+'%' : trend <= -15 ? trend+'%' : 'Stable';
     const tpTrendCol = trend >= 15 ? _wr.green : trend <= -15 ? _wr.red : _wr.text3;
+    const tpTitle = `<div style="font-size:13px;color:${_wr.text3};text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Trade Profile${isIDP ? ' <span style="font-size:13px;color:'+_wr.gold+';background:rgba(212,175,55,.1);padding:1px 5px;border-radius:4px;font-weight:700;vertical-align:middle;margin-left:4px">IDP</span>' : ''}</div>`;
+    const tpRawLine = `<div style="font-size:13px;color:${_wr.text2};margin-top:4px;line-height:1.4">
+        <span style="color:${tpTrendCol}">${tpTrend}</span> \u00B7 ${peakYrsLeft > 0 ? peakYrsLeft+' peak yr'+(peakYrsLeft>1?'s':'')+' left' : pk.desc || 'Past value window'}
+      </div>`;
 
-    rightPanel.innerHTML = `
-      <div style="font-size:13px;color:${_wr.text3};text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Trade Profile${isIDP ? ' <span style="font-size:13px;color:'+_wr.gold+';background:rgba(212,175,55,.1);padding:1px 5px;border-radius:4px;font-weight:700;vertical-align:middle;margin-left:4px">IDP</span>' : ''}</div>
+    if (_pmPro) {
+      const pa = (typeof getPlayerAction === 'function') ? getPlayerAction(pid) : { label: 'Hold', col: _wr.gold, reason: '' };
+      const recCol = pa.col || _wr.gold;
+      rightPanel.innerHTML = `
+      ${tpTitle}
       <div style="font-size:22px;font-weight:800;color:${recCol};font-family:'JetBrains Mono',monospace;letter-spacing:.02em">${pa.label}</div>
-      <div style="font-size:13px;color:${_wr.text2};margin-top:4px;line-height:1.4">
-	        <span style="color:${tpTrendCol}">${tpTrend}</span> \u00B7 ${peakYrsLeft > 0 ? peakYrsLeft+' peak yr'+(peakYrsLeft>1?'s':'')+' left' : pk.desc || 'Past value window'}
-      </div>
+      ${tpRawLine}
       <div style="font-size:13px;color:${_wr.text3};margin-top:4px">${pa.reason}</div>`;
+    } else {
+      // Free: raw trend + age-window facts only \u2014 the Buy/Sell call is Pro.
+      rightPanel.innerHTML = `
+      ${tpTitle}
+      ${tpRawLine}
+      <div style="font-size:13px;color:${_wr.text3};margin-top:6px">\uD83D\uDD12 Buy/Sell verdict \u00B7 <span style="color:${_wr.gold};font-weight:700">Pro</span></div>`;
+    }
   }
 
   // ── Career stats ──
