@@ -166,17 +166,19 @@
 
   // ── fairnessGrade ──────────────────────────────────────────────
   // Ratio-based fairness grade. myValue = what user gives, theirValue = what user gets.
-  // Returns { grade, label, color }.
+  // Returns { grade, label, color, col } — `col` aliases `color` because War Room's
+  // draft consumers read grade.col (the local fallback engine's key).
   function fairnessGrade(myValue, theirValue) {
-    if (myValue === 0 && theirValue === 0) return { grade: '--', label: '', color: '#95A5A6' };
+    const graded = (grade, label, color) => ({ grade, label, color, col: color });
+    if (myValue === 0 && theirValue === 0) return graded('--', '', '#95A5A6');
     const ratio = theirValue / Math.max(myValue, 1); // >1 = user gains
-    if (ratio >= 1.30) return { grade: 'A+', label: 'Steal',       color: '#2ECC71' };
-    if (ratio >= 1.15) return { grade: 'A',  label: 'Clear Win',   color: '#2ECC71' };
-    if (ratio >= 1.05) return { grade: 'B+', label: 'Slight Win',  color: '#2ECC71' };
-    if (ratio >= 0.95) return { grade: 'B',  label: 'Fair',        color: '#D4AF37' };
-    if (ratio >= 0.85) return { grade: 'C',  label: 'Slight Loss', color: '#F0A500' };
-    if (ratio >= 0.75) return { grade: 'D',  label: 'Overpay',     color: '#E67E22' };
-    return { grade: 'F', label: 'Bad Trade', color: '#E74C3C' };
+    if (ratio >= 1.30) return graded('A+', 'Steal',       '#2ECC71');
+    if (ratio >= 1.15) return graded('A',  'Clear Win',   '#2ECC71');
+    if (ratio >= 1.05) return graded('B+', 'Slight Win',  '#2ECC71');
+    if (ratio >= 0.95) return graded('B',  'Fair',        '#D4AF37');
+    if (ratio >= 0.85) return graded('C',  'Slight Loss', '#F0A500');
+    if (ratio >= 0.75) return graded('D',  'Overpay',     '#E67E22');
+    return graded('F', 'Bad Trade', '#E74C3C');
   }
 
   // ── Grudge types ───────────────────────────────────────────────

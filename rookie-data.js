@@ -4,7 +4,14 @@
 (function() {
   window.App = window.App || {};
 
-  const DEFAULT_DATA_BASE = 'https://cdn.jsdelivr.net/gh/C2-Football/WarRoom@main/draft-war-room';
+  // Same-origin by default. The rookie CSVs are vendored from dhq-shared into each
+  // app's own deploy (War Room: draft-war-room/; ReconAI: public/draft-war-room/ →
+  // served at <base>/draft-war-room/), so neither app fetches them cross-repo at
+  // runtime. A bare relative base resolves against the page's baseURI, which is the
+  // app root for both apps' top-level pages. War Room sets window.ROOKIE_DATA_BASE
+  // (shared-loader) and ReconAI sets it (main.js) for explicit, page-independent
+  // resolution; this default is the fallback.
+  const DEFAULT_DATA_BASE = 'draft-war-room';
   const POS_MAP = {
     ED: 'DL', EDGE: 'DL', DE: 'DL', DT: 'DL', IDL: 'DL', NT: 'DL',
     ILB: 'LB', OLB: 'LB', MLB: 'LB',

@@ -11,38 +11,27 @@ window.App = window.App || {};
 
 // ── Master System Prompt ────────────────────────────────────────
 // This is the AI's core identity — shared across all features.
-// ── Alex Ingram Coaching Styles ──────────────────────────────────
-const ALEX_STYLES = {
-  default: { name: 'Default', tone: 'Confident but not arrogant. You back opinions with data. You use football language naturally. Like texting with a brilliant friend who happens to run an NFL front office. Casual but smart.' },
-  general: { name: 'The General', tone: 'Intense, demanding, and motivational. You speak with authority and expect excellence. Every recommendation is delivered like a halftime speech. Short, powerful sentences. No wasted words. You push the user to make bold, decisive moves. "This is your moment. No excuses. Execute."' },
-  enthusiast: { name: 'The Enthusiast', tone: 'Excitable, passionate, and full of energy. You LOVE football and it shows in every word. You use vivid football jargon and get genuinely fired up about good players. Lots of emphasis and exclamation. "Oh baby! This kid is ELECTRIC! You gotta get him on your roster!"' },
-  bayou: { name: 'The Bayou', tone: 'Folksy, raw, and passionate. You speak with a Southern warmth and earthiness. Simple but profound. You tell it like it is with colorful expressions. "I\'m tellin\' you right now, this boy can flat out play. Go get \'im. Don\'t overthink it."' },
-  wit: { name: 'The Wit', tone: 'Sarcastic, confident, and clever. You have a sharp tongue and a sharper mind. You deliver analysis with dry humor and subtle jabs at bad decisions. "Your opponent just dropped a starter. I\'m sure they know what they\'re doing. Lucky us."' },
-  closer: { name: 'The Closer', tone: 'Direct, emphatic, and no-nonsense. Every sentence is a declarative statement. You don\'t hedge. You don\'t qualify. You tell the user what to do and why. Period. "You play to win the game. This move wins. Make it."' },
-  strategist: { name: 'The Strategist', tone: 'Calculated, competitive, and analytical. You speak like a chess master. Every move has three reasons. You reference data, film, and patterns. Cool under pressure. "The data says move. The film confirms it. Three reasons to pull the trigger, zero to wait."' },
-};
-window.ALEX_STYLES = ALEX_STYLES;
-
-function getAlexStyle() {
-  const key = localStorage.getItem('wr_alex_style') || 'default';
-  return ALEX_STYLES[key] || ALEX_STYLES.default;
-}
-window.getAlexStyle = getAlexStyle;
+//
+// 2026-07-08 OWNER RULING: the 7-preset coaching-style dial (ALEX_STYLES /
+// getAlexStyle() / localStorage `wr_alex_style`) is retired — one canonical
+// Alex voice for everyone. The old 'default' style paragraph is now a fixed
+// part of _buildIdentity()'s "HOW YOU SOUND" section. Stale `wr_alex_style`
+// values may still sit in users' localStorage; nothing reads them anymore
+// and they are harmless.
 
 function _buildIdentity() {
-  const style = getAlexStyle();
   return `You are Alex Ingram — the AI General Manager of Dynasty HQ War Room. You go by "Alex."
 
-WHO YOU ARE — this is your core, and it NEVER changes no matter how you're told to sound:
+WHO YOU ARE — this is your core, and it NEVER changes:
 - You're a dynasty lifer who thinks in windows, not weeks. Your one rule: "I don't chase points, I buy windows." Every read traces back to whether a move opens, extends, or wastes our championship window.
 - You're in the room WITH the user — their GM, not a chatbot. You say "we" and "our team." Their wins are your wins, and you take a loss personally.
 - You're decisive. You have an opinion and you commit to it. You would rather be clearly right or clearly wrong than safely vague. A "should I?" never gets "it depends" and a shrug — you pick a side in the first line and then defend it.
 - You respect the user's time: verdict first, reasoning second. Concrete always — real player names, real DHQ values, real owners from their league.
 - You earn trust by owning uncertainty in your OWN voice, never with a disclaimer. If it's a coin flip you say "this one's close, here's the tiebreaker" — you never say "as an AI" or hide behind hedges.
 
-HOW YOU SOUND RIGHT NOW — this is your delivery dial. It changes the flavor, not the substance:
-${style.tone}
-- Hold this delivery for the ENTIRE response, every sentence — but never let the flavor bury the verdict. The character is HOW you say it; the window-thinking above is WHAT you say. A reader should always know your recommendation, whatever voice it's wrapped in.
+HOW YOU SOUND — one voice, every response:
+Confident but not arrogant. You back opinions with data. You use football language naturally. Like texting with a brilliant friend who happens to run an NFL front office. Casual but smart.
+- Hold this delivery for the ENTIRE response, every sentence — but never let the flavor bury the verdict. The voice is HOW you say it; the window-thinking above is WHAT you say. A reader should always know your recommendation.
 
 GROUND RULES:
 - Name: Alex Ingram (initials "AI" — you enjoy the coincidence; you don't harp on it).
@@ -80,8 +69,9 @@ EXECUTION DETAILS:
 - Tailor every read to the user's mode: win-now buys windows, rebuild stacks them, balanced protects them.
 - Match the [TONE] context when provided. Don't be generically upbeat — match the team's reality. A 2-10 rebuild needs patience, not hype. A 10-2 contender needs closer energy.`;
 }
-// DHQ_IDENTITY is a getter so it always reflects current style
-Object.defineProperty(window, '_DHQ_IDENTITY_FN', { value: _buildIdentity, writable: false });
+// Single canonical voice: the identity never changes at runtime, so freezing
+// it once at script load — here AND in every DHQ_PROMPTS `system:` capture
+// below and in ai-dispatch's read — is correct behavior, not a staleness bug.
 const DHQ_IDENTITY = _buildIdentity();
 
 // ── Feature-Specific Prompts (with Few-Shot Examples) ───────────
@@ -204,7 +194,7 @@ Include:
 Search the web for current rookie rankings. Be specific with prospect names.
 Open with one honest sentence in your own voice — your gut read on this draft for our team — before the structured breakdown. This is you talking us through the board, not a report generator printing sections.`,
     maxTokens: 1200,
-    useWebSearch: (typeof canAccess === 'function' && canAccess('BRIEFING_REASONING')) ? true : false,
+    useWebSearch: (typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning')) ? true : false,
   },
 
   // ── TRADE SCOUT (opponent analysis) ────────────────────────────
@@ -265,7 +255,7 @@ Keep it to 4-6 sentences. Be definitive — give a clear recommendation.
 EXAMPLE OF AN IDEAL RESPONSE:
 Assistant: "**Amon-Ra St. Brown (WR, age 25, DHQ 7,400) — HOLD.** Elite WR1 locked in as Detroit's target leader. At 25 he's entering his prime (21-33 for WRs) with 8+ elite years ahead. DHQ 7,400 is fair — you'd need a top-3 pick + a starter to replace this production. Only sell for 8,000+ DHQ in return value."`,
     maxTokens: 500,
-    useWebSearch: (typeof canAccess === 'function' && canAccess('BRIEFING_REASONING')) ? true : false,
+    useWebSearch: (typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning')) ? true : false,
   },
 
   // ── ROOKIE SCOUT REPORT ──────────────────────────────────────────
@@ -292,7 +282,7 @@ Rate each 1-10 with a one-line explanation.
 
 Lead the whole report with one sentence of your gut verdict on this kid in your own voice, then deliver the sections. The grades are the evidence; the voice is yours.`,
     maxTokens: 1500,
-    useWebSearch: (typeof canAccess === 'function' && canAccess('BRIEFING_REASONING')) ? true : false,
+    useWebSearch: (typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning')) ? true : false,
   },
 
   // ── POWER RANKINGS X POST (skip few-shot) ──────────────────────
@@ -335,6 +325,18 @@ Be specific about players and decisions discussed.`,
     instructions: `Context is a JSON object for one player {pid,name,team,pos,age,season,week} (plus league format flags when present). SEARCH THE WEB for the latest reporting on him — prioritize the last ~10 days plus this offseason's moves — from ESPN, PFF, The Athletic, and trusted team beat reporters. Then write 3-5 sentences of plain prose that weave together, in order: (1) SITUATION — the most important real, current development (depth-chart role and usage trend, injury + timeline, contract/roster status, a coaching/scheme change, or a teammate's move that opens or closes a path); (2) IMPACT — what it does to his value now; (3) LONG-TERM OUTLOOK — the dynasty trajectory over the next 1-3 seasons and why. Lead with the single most decision-relevant real development. Do NOT restate fantasy points, DHQ value, or position rank. Do NOT pad with generic age-curve commentary — if news is thin, give the most recent concrete situational fact and what it implies; never invent news. Confident, not hedged. Plain prose only: no markdown, bullets, headers, citations, or sign-off.`,
     maxTokens: 500,
     useWebSearch: true,
+  },
+
+  // ── START/SIT (Game Day Central coaching note) ─────────────────
+  // Powers Alex's 1-2 sentence game-day briefing at the top of Game Day
+  // Central. Facts (win%, points left on the bench, top upgrade, injuries) are
+  // computed deterministically by the start/sit engine and passed in — the model
+  // only narrates them, never invents numbers. Falls back to a seeded template
+  // client-side when AI is unavailable, so this is purely an upgrade.
+  'start-sit': {
+    system: DHQ_IDENTITY,
+    instructions: `Context is a JSON object with this week's facts {week, winPct, margin, opponent, pointsLeftOnBench, topUpgrade, topUpgradeSlot, injuries[], objective, mode}. Write ONE to TWO punchy sentences of game-day coaching for the GM: whether they're favored (use winPct/opponent), the single most valuable start/sit move if pointsLeftOnBench is meaningful (name topUpgrade and its slot), and any injuries to monitor. Use ONLY the numbers provided — never invent points, ranks, or news. Confident, human, conversational. Plain prose only: no markdown, lists, headers, or sign-off.`,
+    maxTokens: 160,
   },
 };
 
@@ -911,7 +913,7 @@ async function dhqAI(type, message, context, options) {
 
   // Auto-enable web search for real-time intent (injuries, news, rumors)
   // Tier-gated: only trial or paid users get web search (via canAccess)
-  const canUseWebSearch = typeof canAccess === 'function' && canAccess('BRIEFING_REASONING');
+  const canUseWebSearch = typeof canAccess === 'function' && canAccess(window.FEATURES?.BRIEFING_REASONING || 'briefing_reasoning');
   const lastUserContent = (options?.messages || []).filter(m => m.role === 'user').slice(-1)[0]?.content || message || '';
   const realTimeIntent = /\b(injur|news|update|latest|rumor|contract|sign(ed|ing)|cut|release|suspend|arrest|trade rumor|depth chart|status|headline|report)\b/i.test(lastUserContent);
   // dynasty_read is intrinsically a web-search feature (player news synthesis), so
@@ -961,13 +963,23 @@ function dhqBuildToneContext() {
   const phase = nfl.season_type === 'off' || week === 0 ? 'offseason'
     : week <= 4 ? 'early' : week <= 10 ? 'midseason' : week <= 14 ? 'late' : 'playoffs';
 
-  // GM Strategy mode
-  const gmStrat = window._wrGmStrategy;
-  const mode = gmStrat?.mode || 'balanced';
+  // GM Strategy mode — normalized to the canonical rebuild/compete/win_now
+  // ids (legacy 'contend'/'balanced' included). Before this, canonical
+  // compete/win_now strings fell through to the crossroads voice.
+  let mode = 'compete';
+  try {
+    if (window.WR?.GmMode?.getMode) {
+      mode = window.WR.GmMode.getMode(S.currentLeagueId);
+    } else {
+      const gmStrat = window._wrGmStrategy;
+      const legacy = { contend: 'win_now', balanced: 'compete', retool: 'compete', balanced_rebuild: 'rebuild' };
+      mode = legacy[gmStrat?.mode] || gmStrat?.mode || 'compete';
+    }
+  } catch { /* keep default */ }
 
   // Build tone guidance
   const lines = [];
-  if (mode === 'contend' || (mode === 'balanced' && topHalf)) {
+  if (mode === 'win_now' || (mode === 'compete' && topHalf)) {
     if (gp > 0 && wins / gp >= 0.65) {
       lines.push('Team is winning and contending. Be confident and aggressive. Use language like "let\'s close this out", "championship-caliber move", "we\'re in the driver\'s seat".');
     } else if (gp > 0 && wins / gp >= 0.45) {
@@ -1127,20 +1139,34 @@ function dhqContext(includeOwners) {
     }
   } catch {}
 
-  // Inject user's GM Strategy if set
-  const gmStrat = window._wrGmStrategy;
-  if (gmStrat && (gmStrat.mode !== 'balanced' || gmStrat.riskTolerance !== 'moderate' || gmStrat.untouchable?.length || gmStrat.targets?.length || gmStrat.notes)) {
-    const stratParts = [`Mode: ${gmStrat.mode}`, `Risk: ${gmStrat.riskTolerance}`];
-    if (gmStrat.untouchable?.length) {
-      const S2 = window.S || {};
-      const names = gmStrat.untouchable.map(pid => S2.players?.[pid]?.full_name || pid).join(', ');
-      stratParts.push(`Untouchable players: ${names}`);
+  // Inject user's GM Strategy if set — the canonical serializer
+  // (WR.GmMode.promptData/promptBlock) renders the FULL strategy: mode
+  // directive, timeline, aggression + acceptance floor, market posture,
+  // draft style, target/sell positions, sell rules, untouchable NAMES.
+  // The legacy riskTolerance/targets/positionalNeeds path is kept only for
+  // embeds where gm-mode.js isn't loaded.
+  let gmPd = null;
+  try {
+    gmPd = window.WR?.GmMode?.promptData?.((window.S || window.App?.S)?.currentLeagueId) || null;
+  } catch { /* gm-mode optional */ }
+  if (gmPd) {
+    parts.push('[GM_STRATEGY]\nThe owner has committed to this strategy. IMPORTANT: honor it in every recommendation.\n'
+      + window.WR.GmMode.promptBlock(null, gmPd));
+  } else {
+    const gmStrat = window._wrGmStrategy;
+    if (gmStrat && (gmStrat.mode !== 'balanced' || gmStrat.riskTolerance !== 'moderate' || gmStrat.untouchable?.length || gmStrat.targets?.length || gmStrat.notes)) {
+      const stratParts = [`Mode: ${gmStrat.mode}`, `Risk: ${gmStrat.riskTolerance}`];
+      if (gmStrat.untouchable?.length) {
+        const S2 = window.S || {};
+        const names = gmStrat.untouchable.map(pid => S2.players?.[pid]?.full_name || pid).join(', ');
+        stratParts.push(`Untouchable players: ${names}`);
+      }
+      if (gmStrat.targets?.length) stratParts.push(`Targeting in trades: ${gmStrat.targets.join(', ')}`);
+      const posNeeds = Object.entries(gmStrat.positionalNeeds || {}).filter(([,v]) => v >= 7).map(([pos,v]) => `${pos}(${v}/10)`);
+      if (posNeeds.length) stratParts.push(`High priority positions: ${posNeeds.join(', ')}`);
+      if (gmStrat.notes) stratParts.push(`Owner notes: "${gmStrat.notes}"`);
+      parts.push('[GM_STRATEGY]\nThe owner has set the following strategic preferences. IMPORTANT: Honor these when making recommendations.\n' + stratParts.join('\n'));
     }
-    if (gmStrat.targets?.length) stratParts.push(`Targeting in trades: ${gmStrat.targets.join(', ')}`);
-    const posNeeds = Object.entries(gmStrat.positionalNeeds || {}).filter(([,v]) => v >= 7).map(([pos,v]) => `${pos}(${v}/10)`);
-    if (posNeeds.length) stratParts.push(`High priority positions: ${posNeeds.join(', ')}`);
-    if (gmStrat.notes) stratParts.push(`Owner notes: "${gmStrat.notes}"`);
-    parts.push('[GM_STRATEGY]\nThe owner has set the following strategic preferences. IMPORTANT: Honor these when making recommendations.\n' + stratParts.join('\n'));
   }
 
   // ── Commissioner league docs (bylaws, awards, custom rules) ──
@@ -1165,7 +1191,52 @@ function dhqContext(includeOwners) {
   const tier = myAssess?.tier || '';
   const teamWindow = myAssess?.window || '';
 
-  parts.push(dhqTeamModeBlock(tier, teamWindow));
+  if (gmPd) {
+    let modeBlock = '[TEAM_MODE]\n';
+    // A committed GM Strategy OWNS the mode: rules derive from the CHOSEN
+    // plan so this block can never contradict [GM_STRATEGY]. The roster
+    // assessment demotes to a one-line reality check when it disagrees.
+    if (gmPd.mode === 'rebuild') {
+      modeBlock += 'Mode: REBUILD (GM-committed strategy)\n';
+      modeBlock += 'Rules:\n';
+      modeBlock += '- ONLY recommend youth (age 25 or younger) and draft picks\n';
+      modeBlock += '- Sell aging veterans (27+ with declining production) for picks/youth\n';
+      modeBlock += '- FAAB: only bid on young upside or emergency injury replacements\n';
+      modeBlock += '- Never recommend "depth" pickups of veterans\n';
+      modeBlock += '- Patience is a strategy — don\'t make moves just to make moves\n';
+    } else if (gmPd.mode === 'win_now') {
+      modeBlock += 'Mode: WIN NOW (GM-committed strategy)\n';
+      modeBlock += 'Rules:\n';
+      modeBlock += '- Recommend proven starters who produce THIS season\n';
+      modeBlock += '- Trade future picks for upgrades at weak spots\n';
+      modeBlock += '- FAAB: bid aggressively on difference-makers who would start\n';
+      modeBlock += '- Don\'t recommend speculative youth projects that won\'t help now\n';
+    } else if (gmPd.mode === 'compete') {
+      modeBlock += 'Mode: COMPETE (GM-committed strategy)\n';
+      modeBlock += 'Rules:\n';
+      modeBlock += '- Balance present and future — favor players aged 24-27 with 3+ peak years left\n';
+      modeBlock += '- Trade aging assets only at peak value; no fire sales\n';
+      modeBlock += '- FAAB: moderate bids on players who upgrade a starting spot\n';
+      modeBlock += '- Never mortgage multiple future firsts for a rental\n';
+    } else {
+      modeBlock += 'Mode: CUSTOM (GM-committed strategy)\n';
+      modeBlock += 'Rules:\n';
+      modeBlock += '- Follow the [GM_STRATEGY] block exactly — aggression, postures, positions, and sell rules as configured\n';
+    }
+    const assessedMode = (tier === 'REBUILDING' || teamWindow === 'REBUILDING') ? 'rebuild'
+      : (tier === 'ELITE' || tier === 'CONTENDER' || teamWindow === 'CONTENDING') ? 'win_now'
+      : '';
+    if (assessedMode && assessedMode !== gmPd.mode) {
+      modeBlock += 'Reality check: roster grades ' + (tier || teamWindow) + ' while the GM has committed to '
+        + String(gmPd.modeLabel || gmPd.mode).toUpperCase()
+        + ' — acknowledge the tension, follow the GM\'s direction.\n';
+    }
+    parts.push(modeBlock);
+  } else {
+    // No committed GM Strategy: assessed-mode rules via the pure helper
+    // (same REBUILD / CONTEND / CROSSROADS text the server emits).
+    parts.push(dhqTeamModeBlock(tier, teamWindow));
+  }
 
   // ── Quality thresholds ───────────────────────────────────────
   parts.push(dhqQualityRulesBlock());

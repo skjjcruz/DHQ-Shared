@@ -125,21 +125,25 @@ window.App = window.App || {};
     const nflStarterSet = {};
     const scoreMap = window.App?.LI?.playerScores || window.LI?.playerScores || null;
     const sourceIds = scoreMap ? Object.keys(scoreMap) : Object.keys(players || {});
+    // Single pass over the source list, bucketing by position — was 9 full scans
+    // (one per DEPTH_POSITION), each re-walking the whole ~2k-12k list and re-
+    // sorting. Eligibility/scoring/sort/slice are identical; just hoisted.
+    const byPos = {};
+    DEPTH_POSITIONS.forEach(pos => { byPos[pos] = []; });
+    for (const pid of sourceIds) {
+      const p = players[pid];
+      if (!p || !p.team) continue; // skip missing / released-cut
+      const bucket = byPos[normPos(p.position)];
+      if (!bucket) continue;       // not a depth position we track
+      // Prefer dynasty value; fall back to season stats
+      const val = scoreMap?.[pid] || getDynastyValue(pid);
+      const pts = val > 0 ? val : (playerStats?.[pid]?.seasonTotal || playerStats?.[pid]?.prevTotal || 0);
+      if (pts > 0) bucket.push({ pid, pts });
+    }
     DEPTH_POSITIONS.forEach(pos => {
       const poolSize = pool[pos] || 32;
-      const allAtPos = [];
-      sourceIds.forEach(pid => {
-        const p = players[pid];
-        if (!p) return;
-        if (normPos(p.position) !== pos) return;
-        if (!p.team) return; // skip released/cut
-        // Prefer dynasty value; fall back to season stats
-        const val = scoreMap?.[pid] || getDynastyValue(pid);
-        const pts = val > 0 ? val : (playerStats?.[pid]?.seasonTotal || playerStats?.[pid]?.prevTotal || 0);
-        if (pts > 0) allAtPos.push({ pid, pts });
-      });
-      allAtPos.sort((a, b) => b.pts - a.pts);
-      nflStarterSet[pos] = new Set(allAtPos.slice(0, poolSize).map(p => p.pid));
+      byPos[pos].sort((a, b) => b.pts - a.pts);
+      nflStarterSet[pos] = new Set(byPos[pos].slice(0, poolSize).map(p => p.pid));
     });
     return nflStarterSet;
   }
@@ -265,28 +269,42 @@ window.App = window.App || {};
     const allTP = tradedPicks || [];
     const result = {};
 
+    // Index traded picks ONCE instead of scanning allTP with .find + .filter for
+    // every (roster × year × round) cell. A pick only matters when it changed
+    // hands (owner_id !== roster_id) — that single guard feeds both lookups:
+    //   awayKeys:     season|round|roster_id  → this owner dealt the pick away
+    //   acquiredByKey season|round|owner_id   → [originalOwnerRid, ...] acquired
+    // Rounds are matched strictly (=== a number) just as before, so non-numeric
+    // rounds (which the old === never matched) are skipped here too.
+    const awayKeys = new Set();
+    const acquiredByKey = new Map();
+    for (const p of allTP) {
+      if (p.owner_id === p.roster_id) continue;
+      if (typeof p.round !== 'number') continue;
+      const season = parseInt(p.season);
+      awayKeys.add(season + '|' + p.round + '|' + p.roster_id);
+      const k = season + '|' + p.round + '|' + p.owner_id;
+      let list = acquiredByKey.get(k);
+      if (!list) { list = []; acquiredByKey.set(k, list); }
+      list.push(p.roster_id);
+    }
+
     (rosters || []).forEach(r => {
       const rid = r.roster_id;
       result[rid] = [];
       years.forEach(yr => {
         for (let rd = 1; rd <= draftRounds; rd++) {
-          // Check if this pick was traded away
-          const tradedAway = allTP.find(p =>
-            parseInt(p.season) === yr && p.round === rd &&
-            p.roster_id === rid && p.owner_id !== rid
-          );
-          if (!tradedAway) {
-            // Own original pick
+          // Own original pick — unless it was dealt away
+          if (!awayKeys.has(yr + '|' + rd + '|' + rid)) {
             result[rid].push({ year: yr, round: rd, originalOwnerRid: rid });
           }
-          // Check for acquired picks
-          const acquired = allTP.filter(p =>
-            parseInt(p.season) === yr && p.round === rd &&
-            p.owner_id === rid && p.roster_id !== rid
-          );
-          acquired.forEach(p => {
-            result[rid].push({ year: yr, round: rd, originalOwnerRid: p.roster_id });
-          });
+          // Acquired picks for this slot
+          const acq = acquiredByKey.get(yr + '|' + rd + '|' + rid);
+          if (acq) {
+            for (const originalOwnerRid of acq) {
+              result[rid].push({ year: yr, round: rd, originalOwnerRid });
+            }
+          }
         }
       });
     });
@@ -545,12 +563,37 @@ window.App = window.App || {};
   /**
    * Build NFL starter set from War Room Scout globals.
    */
+  // ── Memoization for the FromGlobal wrappers ──────────────────────
+  // assessAllTeams rebuilds the NFL starter set, picks-by-owner, and the
+  // league-median weekly target, then assesses every roster — all O(teams²·
+  // players)-ish. The FromGlobal wrappers were re-running ALL of it on each
+  // call: ReconAI's League Intel panel calls them ~4× per render and the Trade
+  // Builder hits the baseline assessment on every asset toggle. Memoize on a
+  // cheap signature of the inputs that actually change an assessment: the
+  // league, the LI score build, traded-pick count, and each roster's player set
+  // (so a 1-for-1 trade — which leaves counts unchanged — still invalidates).
+  let _assessCache = { sig: null, all: null, byId: null };
+  let _starterSetCache = { sig: null, set: null };
+
+  function _assessSig() {
+    const S = window.S || window.App?.S || {};
+    const LI = window.App?.LI || window.LI || {};
+    const rosters = S.rosters || [];
+    let fp = '';
+    for (const r of rosters) fp += r.roster_id + ':' + ((r.players || []).join('.')) + ';';
+    return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|tp' + ((S.tradedPicks || []).length) + '|' + fp;
+  }
+
   function buildNflStarterSetFromGlobal() {
     const S = window.S || window.App?.S;
     if (!S?.players) return {};
+    const sig = _assessSig();
+    if (_starterSetCache.sig === sig && _starterSetCache.set) return _starterSetCache.set;
     const totalTeams = (S.rosters || []).length;
     const nflStarterPool = buildNflStarterPool(totalTeams);
-    return buildNflStarterSet(S.players, S.playerStats, nflStarterPool);
+    const set = buildNflStarterSet(S.players, S.playerStats, nflStarterPool);
+    _starterSetCache = { sig, set };
+    return set;
   }
 
   /**
@@ -560,40 +603,32 @@ window.App = window.App || {};
   function assessAllTeamsFromGlobal() {
     const S = window.S || window.App?.S;
     if (!S?.rosters?.length) return [];
+    const sig = _assessSig();
+    if (_assessCache.sig === sig && _assessCache.all) return _assessCache.all;
     const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);
-    return assessAllTeams(S.rosters, S.players, S.playerStats, league, S.leagueUsers, S.tradedPicks);
+    const all = assessAllTeams(S.rosters, S.players, S.playerStats, league, S.leagueUsers, S.tradedPicks);
+    const byId = new Map(all.map(a => [a.rosterId, a]));
+    _assessCache = { sig, all, byId };
+    return all;
   }
 
   /**
    * Assess a single team by roster ID using War Room Scout globals.
+   * Served from the memoized all-teams pass — the per-roster inputs (starter
+   * set, picks, weekly target) are identical, so the single-team result equals
+   * that roster's entry in assessAllTeams. Avoids rebuilding the league-wide
+   * intermediates on every call.
    * @param {number} rosterId - the roster_id to assess
    * @returns {Object|null}   - assessment object or null
    */
   function assessTeamFromGlobal(rosterId) {
     const S = window.S || window.App?.S;
     if (!S?.rosters?.length) return null;
-    const roster = S.rosters.find(r => r.roster_id === rosterId);
-    if (!roster) return null;
-    const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);
-    const rosterPositions = league?.roster_positions || [];
-    const totalTeams = (S.rosters || []).length;
-    const nflStarterPool = buildNflStarterPool(totalTeams);
-    const nflStarterSet = buildNflStarterSet(S.players, S.playerStats, nflStarterPool);
-    const picksByOwner  = buildPicksByOwner(S.rosters, league, S.tradedPicks);
-    const ownerPicks = picksByOwner[rosterId] || [];
-
-    // Compute WEEKLY_TARGET from league data — median of all teams' optimal PPG
-    const allPPGs = (S.rosters || []).map(r => calcOptimalPPG(r.players || [], S.players, S.playerStats, rosterPositions)).filter(v => v > 0);
-    const WEEKLY_TARGET_DYN = allPPGs.length ? allPPGs.sort((a,b) => a-b)[Math.floor(allPPGs.length/2)] * 1.05 : 150;
-
-    const dynamicConfig = {
-      idealRoster: buildIdealRoster(rosterPositions),
-      minStarterQuality: buildMinStarterQuality(rosterPositions),
-      posWeights: buildPosWeights(rosterPositions),
-      weeklyTarget: WEEKLY_TARGET_DYN,
-    };
-
-    return assessTeam(roster, S.players, S.playerStats, league, S.leagueUsers, nflStarterSet, ownerPicks, S.rosters, dynamicConfig);
+    const sig = _assessSig();
+    if (!(_assessCache.sig === sig && _assessCache.byId)) {
+      assessAllTeamsFromGlobal(); // (re)builds and caches the full pass
+    }
+    return (_assessCache.byId && _assessCache.byId.get(rosterId)) || null;
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -649,44 +684,116 @@ window.App = window.App || {};
       posSurplus = posCount - Math.max(1, Math.round(slotsNeeded));
     }
 
-    // Rookie stash
-    if (meta.source === 'FC_ROOKIE') return { action: 'STASH', label: 'Stash', reason: 'Incoming rookie — hold and develop', col: 'var(--blue)', bg: 'var(--blueL)' };
+    // Base verdict — the strategy-blind age/value/trend read (unchanged chain).
+    function baseAction() {
+      // Rookie stash
+      if (meta.source === 'FC_ROOKIE') return { action: 'STASH', label: 'Stash', reason: 'Incoming rookie — hold and develop', col: 'var(--blue)', bg: 'var(--blueL)' };
 
-    // Elite cornerstone
-    const _isElite = typeof window.App?.isElitePlayer === 'function' ? window.App.isElitePlayer(pid) : val >= 7000;
-    if (_isElite && peakYrsLeft >= 3) return { action: 'CORE', label: 'Build Around', reason: 'Elite value with ' + peakYrsLeft + ' peak years left', col: 'var(--green)', bg: 'var(--greenL)' };
+      // Elite cornerstone
+      const _isElite = typeof window.App?.isElitePlayer === 'function' ? window.App.isElitePlayer(pid) : val >= 7000;
+      if (_isElite && peakYrsLeft >= 3) return { action: 'CORE', label: 'Build Around', reason: 'Elite value with ' + peakYrsLeft + ' peak years left', col: 'var(--green)', bg: 'var(--greenL)' };
 
-    // Rising buy target
-    if (peakYrsLeft >= 4 && trend >= 10 && !isOwned) return { action: 'BUY', label: 'Buy', reason: 'Trending up (+' + trend + '%) with ' + peakYrsLeft + ' peak years ahead', col: 'var(--green)', bg: 'var(--greenL)' };
-    if (peakYrsLeft >= 4 && trend >= 10 && isOwned) return { action: 'HOLD', label: 'Hold', reason: 'Rising asset — keep and ride the wave', col: 'var(--green)', bg: 'var(--greenL)' };
+      // Rising buy target
+      if (peakYrsLeft >= 4 && trend >= 10 && !isOwned) return { action: 'BUY', label: 'Buy', reason: 'Trending up (+' + trend + '%) with ' + peakYrsLeft + ' peak years ahead', col: 'var(--green)', bg: 'var(--greenL)' };
+      if (peakYrsLeft >= 4 && trend >= 10 && isOwned) return { action: 'HOLD', label: 'Hold', reason: 'Rising asset — keep and ride the wave', col: 'var(--green)', bg: 'var(--greenL)' };
 
-    // Sell high window — near end of peak, still has value
-    if (peakYrsLeft > 0 && peakYrsLeft <= 1 && val >= 3000) return { action: 'SELL_HIGH', label: 'Sell High', reason: '1 peak year left — sell while value holds', col: 'var(--amber)', bg: 'var(--amberL)' };
+      // Sell high window — near end of peak, still has value
+      if (peakYrsLeft > 0 && peakYrsLeft <= 1 && val >= 3000) return { action: 'SELL_HIGH', label: 'Sell High', reason: '1 peak year left — sell while value holds', col: 'var(--amber)', bg: 'var(--amberL)' };
 
-    // Past elite peak but still inside the valuable decline band
-    if (peakYrsLeft <= 0 && valueYrsLeft > 0 && trend <= -10) return { action: 'SELL_HIGH', label: 'Sell High', reason: 'Veteran decline band and production slipping', col: 'var(--amber)', bg: 'var(--amberL)' };
-    if (peakYrsLeft <= 0 && valueYrsLeft > 0) return { action: 'HOLD', label: 'Hold', reason: valueYrsLeft + ' value year' + (valueYrsLeft > 1 ? 's' : '') + ' left in veteran band', col: 'var(--amber)', bg: 'var(--amberL)' };
+      // Past elite peak but still inside the valuable decline band
+      if (peakYrsLeft <= 0 && valueYrsLeft > 0 && trend <= -10) return { action: 'SELL_HIGH', label: 'Sell High', reason: 'Veteran decline band and production slipping', col: 'var(--amber)', bg: 'var(--amberL)' };
+      if (peakYrsLeft <= 0 && valueYrsLeft > 0) return { action: 'HOLD', label: 'Hold', reason: valueYrsLeft + ' value year' + (valueYrsLeft > 1 ? 's' : '') + ' left in veteran band', col: 'var(--amber)', bg: 'var(--amberL)' };
 
-    // Past valuable window
-    if (valueYrsLeft <= 0 && trend <= -10) return { action: 'SELL', label: 'Sell', reason: 'Past value window and declining (' + trend + '%)', col: 'var(--red)', bg: 'var(--redL)' };
-    if (valueYrsLeft <= 0) return { action: 'SELL', label: 'Sell', reason: 'Past value window — trade while value remains', col: 'var(--red)', bg: 'var(--redL)' };
+      // Past valuable window
+      if (valueYrsLeft <= 0 && trend <= -10) return { action: 'SELL', label: 'Sell', reason: 'Past value window and declining (' + trend + '%)', col: 'var(--red)', bg: 'var(--redL)' };
+      if (valueYrsLeft <= 0) return { action: 'SELL', label: 'Sell', reason: 'Past value window — trade while value remains', col: 'var(--red)', bg: 'var(--redL)' };
 
-    // Near peak end with declining trend
-    if (peakYrsLeft <= 2 && trend <= -10) return { action: 'SELL_HIGH', label: 'Sell High', reason: 'Window closing and production declining', col: 'var(--amber)', bg: 'var(--amberL)' };
+      // Near peak end with declining trend
+      if (peakYrsLeft <= 2 && trend <= -10) return { action: 'SELL_HIGH', label: 'Sell High', reason: 'Window closing and production declining', col: 'var(--amber)', bg: 'var(--amberL)' };
 
-    // Solid hold — in peak with good value
-    if (peakYrsLeft >= 2 && val >= 4000) return { action: 'HOLD', label: 'Hold', reason: peakYrsLeft + ' peak years left at starter value', col: 'var(--accent)', bg: 'var(--accentL)' };
+      // Solid hold — in peak with good value
+      if (peakYrsLeft >= 2 && val >= 4000) return { action: 'HOLD', label: 'Hold', reason: peakYrsLeft + ' peak years left at starter value', col: 'var(--accent)', bg: 'var(--accentL)' };
 
-    // Low value stash with upside
-    if (val < 2000 && peakYrsLeft >= 3) return { action: 'STASH', label: 'Stash', reason: 'Low value but ' + peakYrsLeft + ' peak years ahead', col: 'var(--blue)', bg: 'var(--blueL)' };
+      // Low value stash with upside
+      if (val < 2000 && peakYrsLeft >= 3) return { action: 'STASH', label: 'Stash', reason: 'Low value but ' + peakYrsLeft + ' peak years ahead', col: 'var(--blue)', bg: 'var(--blueL)' };
 
-    // Buy candidate (not owned, has peak years)
-    if (!isOwned && peakYrsLeft >= 2 && val < 5000) return { action: 'BUY', label: 'Buy', reason: 'Undervalued with ' + peakYrsLeft + ' peak years remaining', col: 'var(--green)', bg: 'var(--greenL)' };
+      // Buy candidate (not owned, has peak years)
+      if (!isOwned && peakYrsLeft >= 2 && val < 5000) return { action: 'BUY', label: 'Buy', reason: 'Undervalued with ' + peakYrsLeft + ' peak years remaining', col: 'var(--green)', bg: 'var(--greenL)' };
 
-    // Default hold
-    if (peakYrsLeft >= 1) return { action: 'HOLD', label: 'Hold', reason: peakYrsLeft + ' peak year' + (peakYrsLeft > 1 ? 's' : '') + ' remaining', col: 'var(--accent)', bg: 'var(--accentL)' };
+      // Default hold
+      if (peakYrsLeft >= 1) return { action: 'HOLD', label: 'Hold', reason: peakYrsLeft + ' peak year' + (peakYrsLeft > 1 ? 's' : '') + ' remaining', col: 'var(--accent)', bg: 'var(--accentL)' };
 
-    return { action: 'SELL', label: 'Sell', reason: 'Past prime — move for future assets', col: 'var(--red)', bg: 'var(--redL)' };
+      return { action: 'SELL', label: 'Sell', reason: 'Past prime — move for future assets', col: 'var(--red)', bg: 'var(--redL)' };
+    }
+
+    const base = baseAction();
+
+    // ── GM Strategy layer ─────────────────────────────────────────
+    // Shifts the verdict at the SOURCE so every consumer (roster rows,
+    // player quick-card, player modal) converges on one answer. Guarded:
+    // team-assess also runs in embeds where gm-mode.js isn't loaded, and
+    // it stays inert until a strategy has actually been saved. Tier-neutral
+    // at the engine level — render seams keep their own Pro gates. Every
+    // strategy-shifted verdict carries a 'GM plan: …' reason so surfaces
+    // can show WHY the call moved.
+    let gmFx = null;
+    try {
+      if (typeof window.WR?.GmMode?.effects === 'function') {
+        const fx = window.WR.GmMode.effects(S.currentLeagueId);
+        if (fx && fx.hasStrategy) gmFx = fx;
+      }
+    } catch (e) { /* gm-mode optional */ }
+    if (!gmFx) return base;
+
+    const age = meta.age || 0;
+    const posKey = String(pos || '');
+
+    // (a) Untouchable — never advise selling a protected player.
+    if (isOwned && gmFx.untouchable && gmFx.untouchable.has(String(pid))) {
+      if (/^SELL/.test(base.action)) {
+        return { action: 'HOLD', label: 'Hold', reason: 'GM plan: untouchable — shielded from sell calls', col: 'var(--accent)', bg: 'var(--accentL)' };
+      }
+      return base;
+    }
+
+    // (b) Sell steer — sell positions and parsed sell rules flip soft
+    // owned verdicts (Hold/Stash) to Sell. CORE/BUY/SELL* stay as-is.
+    if (isOwned && (base.action === 'HOLD' || base.action === 'STASH')) {
+      if (gmFx.sellPositions && gmFx.sellPositions.has(posKey)) {
+        return { action: 'SELL', label: 'Sell', reason: 'GM plan: ' + posKey + ' is flagged to move', col: 'var(--red)', bg: 'var(--redL)' };
+      }
+      const parseRule = window.GMStrategy && window.GMStrategy.parseSellRule;
+      const ruleHit = (gmFx.sellRules || []).map(r => {
+        try { return parseRule ? parseRule(r) : null; } catch (e) { return null; }
+      }).find(r => r && (r.pos || r.ageAbove) && (!r.pos || r.pos === posKey) && (!r.ageAbove || (age && age >= r.ageAbove)));
+      if (ruleHit) {
+        return { action: 'SELL', label: 'Sell', reason: 'GM plan: sell rule — ' + (ruleHit.pos || posKey) + (ruleHit.ageAbove ? ' age ' + ruleHit.ageAbove + '+' : ''), col: 'var(--red)', bg: 'var(--redL)' };
+      }
+    }
+
+    // (c) Mode shifts — the chosen plan tilts borderline verdicts.
+    if (gmFx.mode === 'rebuild') {
+      // Lower the sell bar for aging / declining veterans.
+      if (isOwned && base.action === 'HOLD' && peakYrsLeft <= 0 && (age >= 27 || trend <= -10)) {
+        return { action: 'SELL_HIGH', label: 'Sell High', reason: 'GM plan: Rebuild — move veteran value while it holds', col: 'var(--amber)', bg: 'var(--amberL)' };
+      }
+      // Upgrade Stash weighting for young, still-cheap holds.
+      if (isOwned && base.action === 'HOLD' && peakYrsLeft >= 3 && val < 4000) {
+        return { action: 'STASH', label: 'Stash', reason: 'GM plan: Rebuild — develop ' + peakYrsLeft + ' peak years of upside', col: 'var(--blue)', bg: 'var(--blueL)' };
+      }
+    } else if (gmFx.mode === 'win_now') {
+      // Proven producers become Buy targets.
+      if (!isOwned && base.action === 'HOLD' && val >= 4000) {
+        return { action: 'BUY', label: 'Buy', reason: 'GM plan: Win Now — proven production upgrades this lineup', col: 'var(--green)', bg: 'var(--greenL)' };
+      }
+      // Far-future development stashes become sell candidates (real rookies
+      // keep their Stash — incoming picks aren't tradeable production yet).
+      if (isOwned && base.action === 'STASH' && meta.source !== 'FC_ROOKIE') {
+        return { action: 'SELL', label: 'Sell', reason: 'GM plan: Win Now — flip developmental stashes for immediate help', col: 'var(--red)', bg: 'var(--redL)' };
+      }
+    }
+
+    return base;
   }
 
   // ─────────────────────────────────────────────────────────────

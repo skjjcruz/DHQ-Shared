@@ -211,9 +211,6 @@
       .dhq-tutorial-btn:hover{border-color:rgba(212,175,55,.4);color:#fff}
       .dhq-tutorial-btn:disabled{opacity:.4;cursor:not-allowed}
       .dhq-tutorial-btn.is-primary{background:var(--dhq-tutorial-accent,#D4AF37);border-color:var(--dhq-tutorial-accent,#D4AF37);color:#080808;flex:1}
-      .dhq-tutorial-style-grid{display:flex;flex-wrap:wrap;gap:7px;margin:10px 0 12px}
-      .dhq-tutorial-style{border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.04);border-radius:7px;padding:7px 9px;color:rgba(255,255,255,.72);font:inherit;font-size:12px;font-weight:850;cursor:pointer}
-      .dhq-tutorial-style.is-active{border-color:var(--dhq-tutorial-accent,#D4AF37);background:rgba(212,175,55,.12);color:var(--dhq-tutorial-accent,#D4AF37)}
       @media(max-width:720px){
         .dhq-tutorial-backdrop{backdrop-filter:blur(3px)}
         .dhq-tutorial-panel,.dhq-tutorial-panel.is-anchored{left:12px!important;right:12px!important;bottom:12px!important;top:auto!important;transform:none!important;width:auto;grid-template-columns:1fr;padding:15px;max-height:calc(100vh - 24px)}
@@ -230,15 +227,10 @@
     document.head.appendChild(style);
   }
 
-  function getAlexStyles() {
-    const source = window.ALEX_STYLES || {
-      default: { name: 'Default' },
-      strategist: { name: 'The Strategist' },
-      closer: { name: 'The Closer' },
-      general: { name: 'The General' },
-    };
-    return Object.entries(source).slice(0, 7).map(([key, value]) => ({ key, name: value?.name || key }));
-  }
+  // 2026-07-08 single-voice ruling: the onboarding "Alex communication style"
+  // picker is gone — one canonical Alex voice for everyone. The `alexPicker`
+  // config flag both apps' tutorial configs may still pass is tolerated and
+  // ignored (renders nothing).
 
   function alexHeaderHtml(config) {
     if (config.alexAvatar === false) return '';
@@ -271,20 +263,6 @@
     `;
   }
 
-  function renderStylePicker(config) {
-    if (!config.alexPicker) return '';
-    const current = localStorage.getItem('wr_alex_style') || 'default';
-    return `
-      <div class="dhq-tutorial-style-grid" aria-label="Alex communication style">
-        ${getAlexStyles().map(style => `
-          <button class="dhq-tutorial-style${style.key === current ? ' is-active' : ''}" type="button" data-alex-style="${escapeHtml(style.key)}">
-            ${escapeHtml(style.name)}
-          </button>
-        `).join('')}
-      </div>
-    `;
-  }
-
   function stepList(config) {
     return [
       {
@@ -293,7 +271,6 @@
         desc: config.intro,
         kicker: config.kicker,
         position: 'center',
-        alexPicker: !!config.alexPicker,
         chips: config.openingChips || ['90-second brief', 'GM room map', 'Replay anytime'],
         board: config.openingBoard || {
           label: 'Opening Brief',
@@ -414,7 +391,6 @@
           <p class="dhq-tutorial-copy">${escapeHtml(step.desc)}</p>
           ${chips.length ? `<div class="dhq-tutorial-meta">${chips.map(chip => `<span class="dhq-tutorial-chip">${escapeHtml(chip)}</span>`).join('')}</div>` : ''}
           ${renderChoices(step)}
-          ${renderStylePicker({ ...config, alexPicker: step.alexPicker })}
           <div class="dhq-tutorial-progress">
             <div class="dhq-tutorial-rail"><div class="dhq-tutorial-fill" style="width:${progress}%"></div></div>
             <div class="dhq-tutorial-count">${index + 1}/${steps.length}</div>
@@ -460,11 +436,6 @@
       if (action === 'next') next();
       if (action === 'back') back();
       if (action === 'skip') close('skipped');
-      const styleKey = evt.target?.closest?.('[data-alex-style]')?.dataset?.alexStyle;
-      if (styleKey) {
-        try { localStorage.setItem('wr_alex_style', styleKey); } catch {}
-        root.querySelectorAll('.dhq-tutorial-style').forEach(btn => btn.classList.toggle('is-active', btn.dataset.alexStyle === styleKey));
-      }
       const choiceBtn = evt.target?.closest?.('[data-tutorial-choice]');
       if (choiceBtn) {
         const value = choiceBtn.dataset.tutorialChoice;

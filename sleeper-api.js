@@ -57,6 +57,14 @@ const _sleeperIDB = (() => {
         tx.onabort = () => reject(tx.error || new Error('indexedDB write aborted'));
       }));
     },
+    del(key) {
+      return open().then(db => new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE, 'readwrite');
+        tx.objectStore(STORE).delete(key);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      }));
+    },
   };
 })();
 
@@ -96,54 +104,84 @@ async function fetchPlayers() {
   }
 }
 
-// ── Stats cache per season ───────────────────────────────────────
-const _statsCache = {};
+// ── Season stats / projections cache (IndexedDB-backed) ──────────
+// A full-season map (every player × every stat/projection field) runs to
+// several MB — well over Web Storage's ~5MB quota — so the old sessionStorage
+// write silently threw QuotaExceededError (swallowed) and the cache never
+// persisted: every load re-downloaded multi-MB blobs, the same failure mode the
+// players map had. Persist in IndexedDB (_sleeperIDB) instead, with in-flight
+// dedup so concurrent callers (loadLeagueIntel + loadRosterStats + the player
+// modal) share one download. Completed seasons are immutable → long TTL; the
+// in-progress season → short TTL.
+const _statsCache = {};              // season → {data, ts} (in-memory, fast path)
+// Renamed from _projectionsCache to avoid a top-level identifier collision with
+// War Room's js/core.js which declares its own `let _projectionsCache = {}` at
+// the same global script scope (two same-named top-level bindings throw a parse
+// error and halt core.js before it sets window.App.WrStorage).
+const _sleeperProjectionsCache = {}; // season → {data, ts} (in-memory, fast path)
+const _seasonInflight = {};          // idbKey → Promise (dedup concurrent fetches)
+const _SEASON_LIVE_TTL = 60 * 60 * 1000;            // 1h  — in-progress season
+const _SEASON_DONE_TTL = 30 * 24 * 60 * 60 * 1000;  // 30d — completed seasons (immutable)
 
-async function fetchSeasonStats(season) {
-  if (_statsCache[season]) return _statsCache[season];
-  // Check sessionStorage
-  try {
-    const cached = sessionStorage.getItem('fw_stats_' + season);
-    if (cached) {
-      const d = JSON.parse(cached);
-      _statsCache[season] = d;
-      return d;
-    }
-  } catch (e) { /* sessionStorage may be unavailable */ }
-  // Fetch fresh
-  const data = await sleeperFetch('/stats/nfl/regular/' + season);
-  _statsCache[season] = data;
-  try {
-    sessionStorage.setItem('fw_stats_' + season, JSON.stringify(data));
-  } catch (e) { /* quota exceeded or unavailable */ }
-  return data;
+// Completed seasons (before the current calendar year) never change. In the
+// offseason (e.g. June 2026) the just-finished 2025 season is < 2026 → long TTL;
+// the upcoming 2026 season is >= 2026 → short TTL. Sound for stats + projections.
+function _seasonTtl(season) {
+  return (parseInt(season, 10) < new Date().getFullYear()) ? _SEASON_DONE_TTL : _SEASON_LIVE_TTL;
 }
 
-// ── Projections cache per season ─────────────────────────────────
-// Renamed from _projectionsCache to avoid a top-level identifier
-// collision with War Room's js/core.js which declares its own
-// `let _projectionsCache = {};` at the same global script scope.
-// Two top-level bindings with the same name (one const, one let)
-// throw SyntaxError at parse time and halt core.js before it sets
-// window.App.WrStorage, which then breaks the whole War Room render.
-const _sleeperProjectionsCache = {};
+async function _fetchSeasonCached(season, memCache, idbKey, path) {
+  // Memory hits must respect the TTL too — without the ts check, the first
+  // in-season fetch was served for the whole session (a tab left open across
+  // game day fed day-old stats to every engine until a hard reload).
+  const mem = memCache[season];
+  if (mem && mem.data && Date.now() - mem.ts < _seasonTtl(season)) return mem.data;
+  if (_seasonInflight[idbKey]) return _seasonInflight[idbKey];
+  _seasonInflight[idbKey] = (async () => {
+    const ttl = _seasonTtl(season);
+    try {
+      const cached = await _sleeperIDB.get(idbKey);
+      if (cached && cached.data && Date.now() - cached.ts < ttl) {
+        memCache[season] = { data: cached.data, ts: cached.ts };
+        return cached.data;
+      }
+    } catch (e) { /* IDB unavailable — fall through to refetch */ }
+    const data = await sleeperFetch(path);
+    memCache[season] = { data, ts: Date.now() };
+    // Fire-and-forget persist — never block returning data on the write.
+    _sleeperIDB.set(idbKey, { data, ts: Date.now() }).catch(() => {});
+    return data;
+  })();
+  try { return await _seasonInflight[idbKey]; }
+  finally { delete _seasonInflight[idbKey]; }
+}
+
+// Keys carry a _v2 suffix so they live in IndexedDB, never colliding with the
+// legacy sessionStorage `fw_stats_{season}` key still read by older callers.
+async function fetchSeasonStats(season) {
+  return _fetchSeasonCached(season, _statsCache, 'fw_stats_v2_' + season, '/stats/nfl/regular/' + season);
+}
 
 async function fetchSeasonProjections(season) {
-  if (_sleeperProjectionsCache[season]) return _sleeperProjectionsCache[season];
-  try {
-    const cached = sessionStorage.getItem('fw_projections_' + season);
-    if (cached) {
-      const d = JSON.parse(cached);
-      _sleeperProjectionsCache[season] = d;
-      return d;
-    }
-  } catch (e) {}
-  const data = await sleeperFetch('/projections/nfl/regular/' + season);
-  _sleeperProjectionsCache[season] = data;
-  try {
-    sessionStorage.setItem('fw_projections_' + season, JSON.stringify(data));
-  } catch (e) {}
-  return data;
+  return _fetchSeasonCached(season, _sleeperProjectionsCache, 'fw_proj_v2_' + season, '/projections/nfl/regular/' + season);
+}
+
+// Force-expire the players + season caches so the next fetch hits the network.
+// Called by the manual "Refresh Data" path (which previously nulled a window
+// global that was never the real cache). Memory is cleared for every cached
+// season; IndexedDB entries are deleted only for LIVE seasons — completed
+// seasons are immutable, so re-downloading those multi-MB blobs is pure waste.
+function clearSeasonCaches() {
+  const yr = new Date().getFullYear();
+  [[_statsCache, 'fw_stats_v2_'], [_sleeperProjectionsCache, 'fw_proj_v2_']].forEach(([cache, prefix]) => {
+    Object.keys(cache).forEach(season => {
+      delete cache[season];
+      if (parseInt(season, 10) >= yr) _sleeperIDB.del(prefix + season).catch(() => {});
+    });
+  });
+  _playersCache = null;
+  _playersCacheTime = 0;
+  _sleeperIDB.del('fw_players_cache').catch(() => {});
 }
 
 // ── Common fetch helpers ─────────────────────────────────────────
@@ -467,6 +505,7 @@ var SleeperAPI = {
   fetchPlayers:       fetchPlayers,
   fetchSeasonStats:   fetchSeasonStats,
   fetchSeasonProjections: fetchSeasonProjections,
+  clearSeasonCaches:  clearSeasonCaches,
   fetchUser:          fetchUser,
   fetchLeagues:       fetchLeagues,
   fetchRosters:       fetchRosters,

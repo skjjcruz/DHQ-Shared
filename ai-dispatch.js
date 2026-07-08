@@ -212,6 +212,21 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
   const S = window.S || window.App?.S || {};
   const userOverride = S.aiProvider && S.apiKey; // user explicitly configured a provider
 
+  // ── Free-tier cost clamp (single COGS chokepoint) ─────────────
+  // Every Scout AI surface funnels through callClaude. Free users (no BYOK
+  // key) never reach premium/deep models or web search regardless of the
+  // call type — so clamping here closes all premium/web-search cost leaks at
+  // once and survives future call sites. The per-surface depth gates remove
+  // the buttons; this is the belt-and-suspenders server-cost backstop. The
+  // server (OD.callAI) routes by `type`, so we downgrade the type itself.
+  const _freeTier = !userOverride && !S.apiKey
+    && typeof getTier === 'function' && getTier() === 'free';
+  if (_freeTier) {
+    useWebSearch = false;
+    const t = callType ? AI_ROUTES[callType] : null;
+    if (t === 'premium' || t === 'deep') callType = 'recon-chat'; // cheapest tier
+  }
+
   let effectiveProvider, effectiveModel, routeTier;
   if (userOverride) {
     // User set their own key — use their choice

@@ -40,6 +40,10 @@ const FEATURES = {
   UNLIMITED_CHAT:     'unlimited_chat',     // Unlimited AI chat (free = 3/day)
   WAR_ROOM_CORE:      'war_room_core',      // Full War Room access (paid only)
   DYNASTY_READ_AI:    'dynasty_read_ai',    // Web-search news synthesis on player cards (paid only)
+  STARTSIT_DEPTH:     'startsit_depth',     // Lineup depth: floor/ceiling bands, full bench upgrades, matchup hero
+  LEAGUE_CALENDAR:    'league_calendar',    // Key dates, deadlines, milestones, custom events
+  LEAGUE_HISTORY:     'league_history',     // Champions timeline + all-time records
+  ANALYTICS_DEPTH:    'analytics_depth',    // Command-center dashboards (preset KPI analytics)
 
   // Legacy string keys used by pre-existing code — preserved for compat
   AI_UNLIMITED:       'ai-unlimited',       // ai-dispatch.js
@@ -54,6 +58,10 @@ const _TRIAL_FEATURES = new Set([
   FEATURES.DRAFT_ARCHETYPES,
   FEATURES.FAAB_INTELLIGENCE,
   FEATURES.BRIEFING_REASONING,
+  FEATURES.STARTSIT_DEPTH,
+  FEATURES.LEAGUE_CALENDAR,
+  FEATURES.LEAGUE_HISTORY,
+  FEATURES.ANALYTICS_DEPTH,
   FEATURES.UNLIMITED_CHAT,
   FEATURES.AI_UNLIMITED,
   FEATURES.TRADE_CALC,
@@ -87,7 +95,13 @@ function initTrial() {
 // access because users can edit them in the browser.
 function getTier() {
   if (isSandbox()) return 'paid';
-  if (window.DEV_MODE || ['localhost', '127.0.0.1'].includes(window.location?.hostname)) return 'paid';
+  // Dev-only tier override for QA-ing the free/trial experience locally.
+  // Gated to localhost so it can never bypass the paywall in production.
+  const _host = window.location?.hostname;
+  if ((_host === 'localhost' || _host === '127.0.0.1') && window.__DHQ_FORCE_TIER) {
+    return window.__DHQ_FORCE_TIER;
+  }
+  if (window.DEV_MODE || ['localhost', '127.0.0.1'].includes(_host)) return 'paid';
   if (window.App._userTier) return window.App._userTier;
 
   // Trial window
@@ -121,6 +135,13 @@ function canAccess(feature) {
   return false;
 }
 
+// ── Scout Pro (the binary free vs paid line) ──────────────────────
+// FREE = bare-bones (DHQ values + manual tools + 3 Alex Q/day, phone-only).
+// PRO = everything the app computes / decides / AI-generates + iPad layout.
+// trial + paid are Pro; free is bare. Everything NEW gates on this; the
+// existing granular canAccess(FEATURE) gates already return false for free.
+function isScoutPro() { return getTier() !== 'free'; }
+
 // ── loadUserTier (async, called once at boot) ─────────────────────
 // Fetches tier from Supabase via OD.loadProfile, caches for fast sync lookups.
 async function loadUserTier() {
@@ -128,15 +149,21 @@ async function loadUserTier() {
     if (window.OD?.loadProfile) {
       const profile = await window.OD.loadProfile();
       if (profile?.tier) {
-        const tier = ['scout', 'recon_ai', 'dynast_hq', 'war_room', 'warroom', 'pro', 'commissioner'].includes(profile.tier)
-          ? 'paid' : 'free';
-        window.App._userTier = tier;
+        const paid = ['scout', 'recon_ai', 'dynast_hq', 'war_room', 'warroom', 'pro', 'commissioner'].includes(profile.tier);
+        // A profile without a paid tier must not clobber an active local trial
+        // (trial = Pro, owner ruling 2026-07-05): leave _userTier unset so
+        // getTier() keeps resolving the live trial window and expiry still bites.
+        if (paid) window.App._userTier = 'paid';
+        else if (!isTrialActive()) window.App._userTier = 'free';
         window.App._productTier = normalizeProductTier(profile);
       }
     }
   } catch (e) {
     console.warn('[Tier] Failed to load user tier:', e);
   }
+  // Re-apply Scout Pro chrome now that the async tier is resolved (boot ran
+  // before this; a paid user would otherwise flash the free wordmark/layout).
+  try { if (window._applyScoutProChrome) window._applyScoutProChrome(); } catch (_) { /* ignore */ }
 }
 
 function normalizeProductTier(profile) {
@@ -191,6 +218,10 @@ const _FEATURE_LABELS = {
   [FEATURES.DRAFT_ARCHETYPES]:   'Draft Archetype Analysis',
   [FEATURES.FAAB_INTELLIGENCE]:  'FAAB Intelligence',
   [FEATURES.BRIEFING_REASONING]: 'Briefing Reasoning',
+  [FEATURES.STARTSIT_DEPTH]:     'Lineup Depth Analysis',
+  [FEATURES.LEAGUE_CALENDAR]:    'League Calendar',
+  [FEATURES.LEAGUE_HISTORY]:     'League History',
+  [FEATURES.ANALYTICS_DEPTH]:    'Analytics',
   [FEATURES.FIELD_LOG_SYNC]:     'Field Log Sync',
   [FEATURES.UNLIMITED_CHAT]:     'Unlimited AI Chat',
   [FEATURES.WAR_ROOM_CORE]:      'War Room',
@@ -206,6 +237,10 @@ const _FEATURE_DESCS = {
   [FEATURES.DRAFT_ARCHETYPES]:   'Get a personalized draft strategy based on your roster needs, pick position, and league tendencies.',
   [FEATURES.FAAB_INTELLIGENCE]:  'Intelligent FAAB recommendations calibrated to your roster gaps, budget, and competition.',
   [FEATURES.BRIEFING_REASONING]: 'Understand the "why" behind every briefing item — not just what to watch, but the reasoning that drives it.',
+  [FEATURES.STARTSIT_DEPTH]:     'Floor/ceiling projection bands, full bench upgrade ranking, and matchup context for every lineup decision.',
+  [FEATURES.LEAGUE_CALENDAR]:    'Your league\'s key dates — draft, trade deadline, playoffs, waivers — plus custom reminders with live countdowns.',
+  [FEATURES.LEAGUE_HISTORY]:     'Champions timeline, all-time standings, and career records across every season your league has played.',
+  [FEATURES.ANALYTICS_DEPTH]:    'War Room-depth command-center dashboards: power rankings, competitive tiers, champion blueprint gaps, draft capital, and dynasty trajectory — in preset views.',
   [FEATURES.FIELD_LOG_SYNC]:     'Sync your Field Log decisions to War Room for cross-platform dynasty intelligence.',
   [FEATURES.UNLIMITED_CHAT]:     'Remove the daily message cap and talk to your AI dynasty advisor as much as you need.',
   [FEATURES.WAR_ROOM_CORE]:      'Access the full War Room desktop experience with advanced multi-league analytics.',
@@ -473,8 +508,13 @@ function initTrialSystem() {
   renderTrialBanner();
   updateTrialSettingsSection();
   if (_shouldShowExpirationModal()) {
-    DhqStorage.setStr(STORAGE_KEYS.TRIAL_EXPIRED_SEEN, '1');
-    setTimeout(renderExpirationModal, 500); // let app render first
+    setTimeout(() => { // let app render first
+      // Stamp only when this page can actually show the modal — pages without
+      // the modal DOM (warroom standalones) must not consume the one-time flag.
+      if (!document.getElementById('trial-expired-modal')) return;
+      DhqStorage.setStr(STORAGE_KEYS.TRIAL_EXPIRED_SEEN, '1');
+      renderExpirationModal();
+    }, 500);
   }
 }
 
@@ -518,6 +558,7 @@ Object.assign(window.App, {
   TRIAL_DAYS,
   FREE_CHAT_DAILY_LIMIT,
   getTier,
+  isScoutPro,
   isTrialActive,
   getRemainingTrialDays,
   canAccess,
@@ -535,6 +576,7 @@ Object.assign(window.App, {
 window.FEATURES                  = FEATURES;
 window.FREE_CHAT_DAILY_LIMIT     = FREE_CHAT_DAILY_LIMIT;
 window.getTier                   = getTier;
+window.isScoutPro                = isScoutPro;
 window.isSandbox                 = isSandbox;
 window.isTrialActive             = isTrialActive;
 window.isTrialExpired            = isTrialExpired;
