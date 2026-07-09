@@ -1,0 +1,158 @@
+# Automated engine mirror: C2-Football/dhq-shared (idea lab) → this repo (production).
+#
+# Twice a week (and on demand) this merges new C2 engine commits into main —
+# but only after proving them safe:
+#   1. git merge c2/main            (three-way; prod-only changes survive because
+#                                    the 2026-07-08 ancestry merge recorded a common base)
+#   2. node --check all 38 modules + manifest completeness
+#   3. FULL test suite of BOTH consuming apps (ReconAI-sandbox-dev and
+#      github.com-skjjcruz-owner-dashboard-dev) run against the merged engine
+#   4. green  → push to main (apps pick it up on their next deploy)
+#      red    → PR opened for review instead
+#      conflict → issue opened; a human (or Claude) resolves like Phase 1
+#
+# If C2-Football/dhq-shared ever goes private, add a C2_SYNC_TOKEN repo secret
+# (a PAT with read access to it); the fetch below falls back to github.token.
+name: Sync engine from C2 idea lab
+
+on:
+  schedule:
+    - cron: '0 11 * * 1,4'   # Mon + Thu 11:00 UTC (~6am CT)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: c2-engine-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout DHQ-Shared (full history)
+        uses: actions/checkout@v6
+        with:
+          path: DHQ-Shared
+          fetch-depth: 0
+
+      - name: Fetch C2 canonical + detect new commits
+        id: delta
+        working-directory: DHQ-Shared
+        run: |
+          set -euo pipefail
+          TOKEN='${{ secrets.C2_SYNC_TOKEN }}'
+          if [ -z "$TOKEN" ]; then TOKEN='${{ github.token }}'; fi
+          git remote add c2 "https://x-access-token:${TOKEN}@github.com/C2-Football/dhq-shared.git"
+          git fetch c2 main
+          NEW=$(git rev-list --count HEAD..c2/main)
+          echo "new=$NEW" >> "$GITHUB_OUTPUT"
+          echo "C2 commits not yet in main: $NEW"
+          git log --oneline HEAD..c2/main | head -20 || true
+
+      - name: Merge C2 changes
+        if: steps.delta.outputs.new != '0'
+        id: merge
+        working-directory: DHQ-Shared
+        run: |
+          set -euo pipefail
+          git config user.name  'dhq-engine-sync[bot]'
+          git config user.email 'noreply@github.com'
+          if git merge c2/main --no-edit; then
+            echo "outcome=clean" >> "$GITHUB_OUTPUT"
+          else
+            git merge --abort
+            echo "outcome=conflict" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open issue on merge conflict
+        if: steps.delta.outputs.new != '0' && steps.merge.outputs.outcome == 'conflict'
+        working-directory: DHQ-Shared
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --title "Engine sync conflict with C2-Football/dhq-shared ($(date -u +%F))" \
+            --body "The scheduled engine sync hit merge conflicts with C2-Football/dhq-shared@main. Resolve manually (three-way merge, preserving prod-only changes: deleteAccount/JWT gate in supabase-client, AI enrichment/quality rules, tradeablePickYears, tier path gate) — see the 2026-07-08 Phase 1 commit f1b486a for the pattern."
+          echo "::warning::Merge conflict — issue opened, no changes pushed."
+
+      - name: Syntax-check merged engine
+        if: steps.delta.outputs.new != '0' && steps.merge.outputs.outcome == 'clean'
+        working-directory: DHQ-Shared
+        run: |
+          set -euo pipefail
+          for f in *.js; do node --check "$f"; done
+          python3 - <<'EOF'
+          import json, os
+          m = json.load(open('manifest.json'))
+          missing = [f for f in m['modules'] if not os.path.exists(f)]
+          assert not missing, f"manifest modules missing from tree: {missing}"
+          print(f"manifest OK: {len(m['modules'])} modules present")
+          EOF
+
+      - name: Checkout ReconAI-sandbox-dev (consumer 1)
+        if: steps.delta.outputs.new != '0' && steps.merge.outputs.outcome == 'clean'
+        uses: actions/checkout@v6
+        with:
+          repository: skjjcruz/ReconAI-sandbox-dev
+          path: ReconAI-sandbox-dev
+
+      - name: Checkout owner-dashboard-dev (consumer 2)
+        if: steps.delta.outputs.new != '0' && steps.merge.outputs.outcome == 'clean'
+        uses: actions/checkout@v6
+        with:
+          repository: skjjcruz/github.com-skjjcruz-owner-dashboard-dev
+          path: github.com-skjjcruz-owner-dashboard-dev
+
+      - name: Setup Node
+        if: steps.delta.outputs.new != '0' && steps.merge.outputs.outcome == 'clean'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Validate consumer 1 — ReconAI full suite + build
+        if: steps.delta.outputs.new != '0' && steps.merge.outputs.outcome == 'clean'
+        id: reconai
+        working-directory: ReconAI-sandbox-dev
+        env:
+          DHQ_SHARED_SOURCE: ${{ github.workspace }}/DHQ-Shared
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
+          npm run build
+
+      - name: Validate consumer 2 — dashboard full suite
+        if: steps.delta.outputs.new != '0' && steps.merge.outputs.outcome == 'clean'
+        id: dashboard
+        working-directory: github.com-skjjcruz-owner-dashboard-dev
+        env:
+          DHQ_SHARED_SOURCE: ${{ github.workspace }}/DHQ-Shared
+        run: |
+          set -euo pipefail
+          npm ci
+          npm test
+
+      - name: Push merged engine to main (all green)
+        if: steps.delta.outputs.new != '0' && steps.merge.outputs.outcome == 'clean' && success()
+        working-directory: DHQ-Shared
+        run: |
+          git push origin HEAD:main
+          echo "::notice::Engine synced from C2 and pushed to main — both consumer suites green."
+
+      - name: Open PR instead (validation failed)
+        if: failure() && steps.merge.outputs.outcome == 'clean'
+        working-directory: DHQ-Shared
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="auto-sync/c2-$(date -u +%Y%m%d-%H%M)"
+          git push origin "HEAD:refs/heads/${BRANCH}"
+          gh pr create \
+            --head "$BRANCH" \
+            --title "Engine sync from C2 (validation failed — needs review)" \
+            --body "The scheduled sync merged cleanly but a consumer test suite failed against the merged engine. Check this run's logs, fix, and merge manually." || true
