@@ -76,7 +76,10 @@ const _PAID_ONLY_FEATURES = new Set([
   FEATURES.DYNASTY_READ_AI,
 ]);
 
-const TRIAL_DAYS           = 30;
+// Billing went live 2026-07-10: the legacy 30-day everything-unlocked trial
+// is retired. New accounts are free (Scout) immediately; the real Pro trial
+// is the 7-day one that runs through Stripe / the App Store at checkout.
+const TRIAL_DAYS           = 0;
 const FREE_CHAT_DAILY_LIMIT = 3;
 
 // ── Trial initialization ─────────────────────────────────────────
