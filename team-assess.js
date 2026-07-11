@@ -581,7 +581,12 @@ window.App = window.App || {};
     const rosters = S.rosters || [];
     let fp = '';
     for (const r of rosters) fp += r.roster_id + ':' + ((r.players || []).join('.')) + ';';
-    return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|tp' + ((S.tradedPicks || []).length) + '|' + fp;
+    // Include data-volume fingerprints so assessments recompute when player
+    // scores/stats finish loading AFTER intelligence first builds — a cached
+    // partial-data pass otherwise served a wrong tier until rosters changed.
+    const scoreCount = Object.keys(LI.playerScores || {}).length;
+    const statCount = Object.keys(S.playerStats || {}).length;
+    return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|sc' + scoreCount + '|st' + statCount + '|tp' + ((S.tradedPicks || []).length) + '|' + fp;
   }
 
   function buildNflStarterSetFromGlobal() {
