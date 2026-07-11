@@ -67,9 +67,33 @@ function getAppSession() {
     try {
         const raw = localStorage.getItem(FW_SESSION_KEY);
         const session = raw ? JSON.parse(raw) : null;
-        if (session?.token && session?.user?.id) return session;
+        // Expired tokens are rejected here for the same reason as in
+        // getSessionToken(): "has a session" must mean "has a usable session",
+        // otherwise callers fire doomed requests, hit 401, and silently
+        // resolve the account to the free tier instead of re-authing.
+        if (session?.token && session?.user?.id && !_jwtExpired(session.token)) return session;
     } catch {}
     return null;
+}
+
+// A dead session (expired locally, or revoked/rejected by the server) must
+// not linger in storage: every gate that sees a token treats the user as
+// signed in, so a rotten token reads as "signed in but free tier" forever.
+// Clearing it routes the user through the normal sign-in recovery path on
+// the next gate check. Apps that want to show a "session expired" notice
+// can listen for the event.
+function _clearDeadAppSession(reason) {
+    let email = null;
+    try {
+        const raw = localStorage.getItem(FW_SESSION_KEY);
+        email = raw ? (JSON.parse(raw)?.user?.email || null) : null;
+    } catch {}
+    try { localStorage.removeItem(FW_SESSION_KEY); } catch {}
+    _supabase = null;
+    _supabaseToken = null;
+    try {
+        window.dispatchEvent(new CustomEvent('dhq:session-expired', { detail: { reason, email } }));
+    } catch {}
 }
 
 // Age of the token's `iat` claim in hours; null when undecodable.
@@ -90,17 +114,37 @@ function _jwtAgeHours(token) {
 // saved sessions without user.id, permanently locking those accounts to the
 // free tier — or (b) carries a token more than a day old, so any visit
 // inside the 7-day window slides the session forward and re-stamps
-// tier/products from the live subscription. Expired or revoked tokens are
-// left untouched: refresh extends live sessions, it cannot resurrect dead
-// ones, and the sign-in flow remains the recovery path.
+// tier/products from the live subscription. Expired tokens are cleared —
+// refresh cannot resurrect them, and leaving them in storage strands the
+// user in a signed-in-but-free limbo — so sign-in becomes the recovery path.
+//
+// Memoized per stored token, not per page load: SPA-style sign-in (or an
+// OAuth callback that lands after boot already ran) swaps the stored session
+// without a reload, and a page-load memo would keep serving the stale
+// pre-sign-in result — every profile read would resolve free until a manual
+// refresh.
 let _sessionSyncPromise = null;
+let _sessionSyncToken = null;
+function _storedSessionToken() {
+    try {
+        const raw = localStorage.getItem(FW_SESSION_KEY);
+        return raw ? (JSON.parse(raw)?.token || null) : null;
+    } catch { return null; }
+}
 function ensureFreshAppSession() {
-    if (_sessionSyncPromise) return _sessionSyncPromise;
+    const currentToken = _storedSessionToken();
+    if (_sessionSyncPromise && _sessionSyncToken === currentToken) return _sessionSyncPromise;
+    _sessionSyncToken = currentToken;
     _sessionSyncPromise = (async () => {
         try {
             const raw = localStorage.getItem(FW_SESSION_KEY);
             const session = raw ? JSON.parse(raw) : null;
-            if (!session?.token || _jwtExpired(session.token)) return getAppSession();
+            if (!session?.token) return null;
+            if (_jwtExpired(session.token)) {
+                _clearDeadAppSession('expired');
+                _sessionSyncToken = null;
+                return null;
+            }
             const needsRepair = !session?.user?.id;
             const age = _jwtAgeHours(session.token);
             const stale = age === null || age > 24;
@@ -120,12 +164,21 @@ function ensureFreshAppSession() {
                         user: Object.assign({}, session.user || {}, data.user),
                     });
                     localStorage.setItem(FW_SESSION_KEY, JSON.stringify(next));
+                    // Re-key the memo to the token we just wrote, so the next
+                    // caller in this page load hits the cache instead of
+                    // treating the slide itself as a session change.
+                    _sessionSyncToken = data.token;
                     _supabase = null;
                     _supabaseToken = null;
                 }
+            } else if (resp.status === 401) {
+                // Revoked (session_version bump) or otherwise rejected: the
+                // token can never work again, so clear it — a lingering dead
+                // token reads as "signed in but free" at every gate.
+                _clearDeadAppSession('revoked');
+                _sessionSyncToken = null;
+                return null;
             }
-            // 401 = revoked/rejected: keep the stored session as-is; callers
-            // fail authenticated calls exactly as before and the user re-auths.
         } catch { /* network hiccup — try again next page load */ }
         return getAppSession();
     })();
@@ -410,6 +463,13 @@ window.OD.loadProfile = async function() {
                     platforms: data?.platformUsernames || {},
                     onboardingComplete: true,
                 };
+            }
+            if (resp.status === 401) {
+                // The server rejected a token that passed the local expiry
+                // check — revoked or signed with a rotated secret. Dead either
+                // way; clear it so the user is routed to sign-in instead of
+                // being silently resolved to the free tier on every load.
+                _clearDeadAppSession('revoked');
             }
         } catch {}
     }
