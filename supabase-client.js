@@ -17,6 +17,7 @@ const BACKEND_ENDPOINTS = {
     aiAnalyze: APP_CONFIG.endpoints?.aiAnalyze || `${SUPABASE_URL}/functions/v1/ai-analyze`,
     setPassword: APP_CONFIG.endpoints?.setPassword || `${SUPABASE_URL}/functions/v1/set-password`,
     fwProfile: APP_CONFIG.endpoints?.fwProfile || `${SUPABASE_URL}/functions/v1/fw-profile`,
+    fwRefreshSession: APP_CONFIG.endpoints?.fwRefreshSession || `${SUPABASE_URL}/functions/v1/fw-refresh-session`,
     fwDeleteAccount: APP_CONFIG.endpoints?.fwDeleteAccount || `${SUPABASE_URL}/functions/v1/fw-delete-account`,
 };
 
@@ -69,6 +70,66 @@ function getAppSession() {
         if (session?.token && session?.user?.id) return session;
     } catch {}
     return null;
+}
+
+// Age of the token's `iat` claim in hours; null when undecodable.
+function _jwtAgeHours(token) {
+    try {
+        const part = String(token).split('.')[1];
+        if (!part) return null;
+        const claims = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
+        if (typeof claims?.iat !== 'number') return null;
+        return (Date.now() - claims.iat * 1000) / 3600000;
+    } catch { return null; }
+}
+
+// ── Session self-repair + sliding renewal ─────────────────────
+// App JWTs live 7 days. This runs once per page load (memoized) before the
+// first profile read and calls fw-refresh-session when the stored session
+// either (a) is missing its user record — the pre-fix Google OAuth pages
+// saved sessions without user.id, permanently locking those accounts to the
+// free tier — or (b) carries a token more than a day old, so any visit
+// inside the 7-day window slides the session forward and re-stamps
+// tier/products from the live subscription. Expired or revoked tokens are
+// left untouched: refresh extends live sessions, it cannot resurrect dead
+// ones, and the sign-in flow remains the recovery path.
+let _sessionSyncPromise = null;
+function ensureFreshAppSession() {
+    if (_sessionSyncPromise) return _sessionSyncPromise;
+    _sessionSyncPromise = (async () => {
+        try {
+            const raw = localStorage.getItem(FW_SESSION_KEY);
+            const session = raw ? JSON.parse(raw) : null;
+            if (!session?.token || _jwtExpired(session.token)) return getAppSession();
+            const needsRepair = !session?.user?.id;
+            const age = _jwtAgeHours(session.token);
+            const stale = age === null || age > 24;
+            if (!needsRepair && !stale) return getAppSession();
+            const resp = await fetch(BACKEND_ENDPOINTS.fwRefreshSession, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${session.token}`,
+                    'apikey': SUPABASE_ANON,
+                },
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                if (data?.token && data?.user?.id) {
+                    const next = Object.assign({}, session, {
+                        token: data.token,
+                        user: Object.assign({}, session.user || {}, data.user),
+                    });
+                    localStorage.setItem(FW_SESSION_KEY, JSON.stringify(next));
+                    _supabase = null;
+                    _supabaseToken = null;
+                }
+            }
+            // 401 = revoked/rejected: keep the stored session as-is; callers
+            // fail authenticated calls exactly as before and the user re-auths.
+        } catch { /* network hiccup — try again next page load */ }
+        return getAppSession();
+    })();
+    return _sessionSyncPromise;
 }
 
 // ── Bootstrap Supabase client ─────────────────────────────────
@@ -327,7 +388,10 @@ window.OD.saveProfile = async function(profile) {
 };
 
 window.OD.loadProfile = async function() {
-    const appSession = getAppSession();
+    // Repair/renew the stored session first: pre-fix Google OAuth sessions
+    // lack user.id (getAppSession() rejects them → silent free-tier fallback),
+    // and week-old tokens need sliding before fw-profile will accept them.
+    const appSession = isConfigured() ? await ensureFreshAppSession() : getAppSession();
     if (appSession?.token && isConfigured()) {
         try {
             const resp = await fetch(BACKEND_ENDPOINTS.fwProfile, {
@@ -620,6 +684,8 @@ window.OD.saveDNA = function(leagueId, dnaMap) {
 // ══════════════════════════════════════════════════════════════════
 
 window.OD.getSessionToken = getSessionToken;
+window.OD.getAppSession = getAppSession;
+window.OD.ensureFreshAppSession = ensureFreshAppSession;
 window.OD.getClient = getClient;
 window.OD.isConfigured = isConfigured;
 window.OD.getCurrentUsername = getCurrentUsername;
