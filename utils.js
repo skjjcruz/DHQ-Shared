@@ -15,7 +15,7 @@ function normPos(pos) {
     if (!raw) return null;
     if (raw === 'PK')                                         return 'K';   // MFL codes kickers as PK
     if (['DB', 'CB', 'S', 'SS', 'FS'].includes(raw))          return 'DB';
-    if (['DL', 'DE', 'DT', 'NT', 'IDL', 'EDGE'].includes(raw)) return 'DL';
+    if (['DL', 'DE', 'DT', 'NT', 'IDL', 'EDGE', 'ED'].includes(raw)) return 'DL'; // 'ED' = scouting CSVs' edge code
     if (['LB', 'OLB', 'ILB', 'MLB'].includes(raw))            return 'LB';
     if (['DEF', 'DST', 'D/ST'].includes(raw))                 return 'DEF';
     return raw; // QB, RB, WR, TE, K, etc.

@@ -429,7 +429,14 @@
     });
 
     Object.entries(enrichMap).forEach(([key, e]) => {
-      const aliasMatch = aliasKeys(e.displayName || key).map(alias => aliasIndex[alias]).find(Boolean);
+      // Same identity rule as findProspect: a FULL first name must never take
+      // the single-initial alias path — "Dominic Bailey" enrichment must not
+      // attach to David Bailey via "d bailey". Initial aliases stay available
+      // for genuinely abbreviated names ("K.C."/"KC" ↔ "Kevin").
+      const qFirst = stripSuffix(normName(e.displayName || key)).split(' ').filter(Boolean)[0] || '';
+      const aliasMatch = aliasKeys(e.displayName || key)
+        .filter(alias => !((alias.split(' ')[0] || '').length === 1 && qFirst.length > 2))
+        .map(alias => aliasIndex[alias]).find(Boolean);
       if (aliasMatch) {
         applyPostDraftEnrichment(aliasMatch, e);
         return;
@@ -681,7 +688,14 @@
     if (!name || !cache.loaded) return null;
     const direct = cache.byName[normName(name)];
     if (direct) return enrichWithDynastyValue(direct);
+    // The single-initial alias ("d bailey") exists for abbreviated queries
+    // ("D. Bailey", "KC Concepcion"). A FULL first name must never take that
+    // path — "Dominic Bailey" used to fuzzy-match David Bailey via "d bailey"
+    // and inherit his consensus rank (and from there a first-round DHQ seed).
+    const qFirst = stripSuffix(normName(name)).split(' ').filter(Boolean)[0] || '';
     for (const key of aliasKeys(name)) {
+      const kFirst = key.split(' ')[0] || '';
+      if (kFirst.length === 1 && qFirst.length > 2) continue;
       if (cache.byName[key]) return enrichWithDynastyValue(cache.byName[key]);
     }
     return null;
