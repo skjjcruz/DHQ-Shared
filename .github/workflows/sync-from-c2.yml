@@ -16,8 +16,14 @@
 name: Sync engine from C2 idea lab
 
 on:
-  schedule:
-    - cron: '0 11 * * 1,4'   # Mon + Thu 11:00 UTC (~6am CT)
+  # PAUSED 2026-07-13 (owner ruling): the scheduled Mon/Thu auto-sync is off
+  # while live diverges hard for launch — auto-merging idea-lab code into the
+  # live engine is more risk than value right now, and the validation harness
+  # needs a fix (it must `npm run sync:shared` before running consumer tests).
+  # Re-enable by uncommenting the schedule below. Still runnable on demand via
+  # the Actions tab (workflow_dispatch) when a specific lab change is wanted.
+  # schedule:
+  #   - cron: '0 11 * * 1,4'   # Mon + Thu 11:00 UTC (~6am CT)
   workflow_dispatch:
 
 permissions:
