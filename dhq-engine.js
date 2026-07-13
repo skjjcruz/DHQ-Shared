@@ -672,7 +672,7 @@ async function loadLeagueIntel(){
   const rp=league?.roster_positions||[];
   const totalTeams=S.rosters?.length||16;
   const positions=['QB','RB','WR','TE','K','DEF','DL','LB','DB'];
-  const posMapLocal=p=>{const n=String(p||'').toUpperCase();if(['DE','DT','NT','EDGE'].includes(n))return'DL';if(['CB','S','SS','FS'].includes(n))return'DB';if(['OLB','ILB','MLB'].includes(n))return'LB';if(['DST','D/ST'].includes(n))return'DEF';return n;};
+  const posMapLocal=p=>{const n=String(p||'').toUpperCase();if(['DE','DT','NT','EDGE','ED','IDL'].includes(n))return'DL';if(['CB','S','SS','FS'].includes(n))return'DB';if(['OLB','ILB','MLB'].includes(n))return'LB';if(['DST','D/ST'].includes(n))return'DEF';return n;};
 
   // Starter counts per position, including startable flex slots.
   const starterCounts=_dhqStarterCountsFromRoster(rp);
@@ -2033,6 +2033,15 @@ async function loadLeagueIntel(){
           const prospect=typeof window.findProspect==='function'
             ?window.findProspect(p.full_name||((p.first_name||'')+' '+(p.last_name||'')).trim())
             :null;
+          // Identity guard: a fuzzy alias match may enrich a card, but must never
+          // SEED VALUES — "Dominic Bailey" once priced off David Bailey's R1
+          // consensus via the "d bailey" alias. Reject when both first names are
+          // full words and neither is a prefix of the other (keeps Cam/Cameron).
+          if(prospect){
+            const _fTok=s=>String(s||'').toLowerCase().replace(/[^a-z\s]/g,'').trim().split(/\s+/)[0]||'';
+            const _a=_fTok(p.full_name||p.first_name),_b=_fTok(prospect.name);
+            if(_a.length>2&&_b.length>2&&_a!==_b&&!_a.startsWith(_b)&&!_b.startsWith(_a))return;
+          }
           // Require a real consensus match. Sleeper's player universe contains
           // hundreds of years_exp===0 UDFA nobodies; without this guard each one
           // gets pinned to the bottom of the veteran ladder and floods the

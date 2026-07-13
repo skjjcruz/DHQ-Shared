@@ -15,7 +15,7 @@ function normPos(pos) {
     if (!raw) return null;
     if (raw === 'PK')                                         return 'K';   // MFL codes kickers as PK
     if (['DB', 'CB', 'S', 'SS', 'FS'].includes(raw))          return 'DB';
-    if (['DL', 'DE', 'DT', 'NT', 'IDL', 'EDGE'].includes(raw)) return 'DL';
+    if (['DL', 'DE', 'DT', 'NT', 'IDL', 'EDGE', 'ED'].includes(raw)) return 'DL'; // 'ED' = scouting CSVs' edge code
     if (['LB', 'OLB', 'ILB', 'MLB'].includes(raw))            return 'LB';
     if (['DEF', 'DST', 'D/ST'].includes(raw))                 return 'DEF';
     return raw; // QB, RB, WR, TE, K, etc.
@@ -181,3 +181,43 @@ window.getLeaguePositions = getLeaguePositions;
 window.isValidLeaguePosition = isValidLeaguePosition;
 window.App.getLeaguePositions = getLeaguePositions;
 window.App.isValidLeaguePosition = isValidLeaguePosition;
+
+// ── Position GROUP filters (owner ask 2026-07-12) ───────────────
+// League-derived flex groupings selectable anywhere positions filter
+// (Trade Center asset browser, Free Agency, draft boards). A group only
+// exists when the league actually rosters that slot. Group KEYS double as
+// their display strings so existing chip renderers need no label map, and
+// they can never collide with the 9 normPos position strings.
+const FLEX_GROUP_POSITIONS = {
+  'FLEX':     ['RB', 'WR', 'TE'],
+  'SFLEX':    ['QB', 'RB', 'WR', 'TE'],
+  'REC FLEX': ['WR', 'TE'],
+  'W/R FLEX': ['RB', 'WR'],
+  'IDP FLEX': ['DL', 'LB', 'DB'],
+};
+function getLeagueFlexGroups(opts) {
+  opts = opts || {};
+  const league = opts.league || window.S?.leagues?.find(l => l.league_id === window.S?.currentLeagueId) || window.S?.league;
+  const up = (league?.roster_positions || league?.rosterPositions || []).map(s => String(s || '').toUpperCase());
+  const has = (...names) => names.some(n => up.includes(n));
+  const groups = [];
+  if (has('FLEX', 'WRRBTE_FLEX', 'WR_RB_TE_FLEX', 'W/R/T')) groups.push('FLEX');
+  if (has('SUPER_FLEX', 'SUPERFLEX', 'SF', 'QB_FLEX', 'OP', 'WRTQ')) groups.push('SFLEX');
+  if (has('REC_FLEX', 'WR_TE', 'W/T')) groups.push('REC FLEX');
+  if (has('WRRB_FLEX', 'WR_RB_FLEX', 'W/R')) groups.push('W/R FLEX');
+  if (has('IDP_FLEX', 'IDP')) groups.push('IDP FLEX');
+  return groups;
+}
+// Predicate twin: does a normPos'd position satisfy a filter value that may
+// be a plain position OR a flex-group key? Drop-in for `pos === filter`.
+function posMatchesFilter(pos, filter) {
+  if (!filter || filter === 'ALL' || filter === 'All') return true;
+  const group = FLEX_GROUP_POSITIONS[filter];
+  return group ? group.indexOf(pos) !== -1 : pos === filter;
+}
+
+window.getLeagueFlexGroups = getLeagueFlexGroups;
+window.posMatchesFilter = posMatchesFilter;
+window.App.FLEX_GROUP_POSITIONS = FLEX_GROUP_POSITIONS;
+window.App.getLeagueFlexGroups = getLeagueFlexGroups;
+window.App.posMatchesFilter = posMatchesFilter;
