@@ -848,7 +848,17 @@ async function dhqAI(type, message, context, options) {
   if (!config) throw new Error(`Unknown DHQ AI type: ${type}`);
 
   const system = config.system;
-  const maxTokens = config.maxTokens || 500;
+  // Reasoning models on the 'standard'/'fast' tiers (e.g. gemini-2.5-flash)
+  // spend hidden "thinking" tokens out of the SAME output budget as the reply.
+  // With the old flat caps (home-chat 500), thinking consumed almost all of it
+  // and the visible answer was cut off mid-sentence. Reserve headroom for the
+  // thinking pass so config.maxTokens stays the ANSWER budget. This is a
+  // ceiling, not a target: the server clamps the total to the plan's output cap
+  // (Pro 4200), non-thinking models (Claude) ignore the extra room, and every
+  // model still stops when the answer is done — so it never pads a reply, it
+  // only stops thinking from eating it.
+  const THINKING_HEADROOM = 1500;
+  const maxTokens = (config.maxTokens || 500) + THINKING_HEADROOM;
   const useWebSearch = config.useWebSearch || false;
 
   // Improvement D: Inject real-time news for applicable types
