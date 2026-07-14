@@ -21,6 +21,28 @@ const BACKEND_ENDPOINTS = {
     fwDeleteAccount: APP_CONFIG.endpoints?.fwDeleteAccount || `${SUPABASE_URL}/functions/v1/fw-delete-account`,
 };
 
+// The server AI fetch (OD.callAI) had no timeout: a stalled ai-analyze edge
+// function left Ask Alex hanging on "..." forever, with no error for the UI
+// to catch. Abort after OD_AI_TIMEOUT_MS and throw a clean, retryable error
+// so the chat can recover instead of spinning. Unique name — the sibling
+// helper in ai-dispatch.js is IIFE-scoped, so there is no collision.
+const OD_AI_TIMEOUT_MS = 45000;
+const _odFetchWithTimeout = function(url, opts, ms) {
+    if (typeof AbortController === 'undefined') return fetch(url, opts);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms || OD_AI_TIMEOUT_MS);
+    return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
+        .catch(err => {
+            if (err && (err.name === 'AbortError' || err.code === 20)) {
+                const e = new Error('The AI request timed out. Please try again.');
+                e.timedOut = true; e.status = 504;
+                throw e;
+            }
+            throw err;
+        })
+        .finally(() => clearTimeout(timer));
+};
+
 // ── Session token storage ─────────────────────────────────────
 const SESSION_LS_KEY = 'od_session_v1';
 const FW_SESSION_KEY = 'fw_session_v1';
@@ -362,7 +384,7 @@ window.OD.callAI = async function({ type, context }) {
             });
         }
     }
-    const response = await fetch(BACKEND_ENDPOINTS.aiAnalyze, {
+    const response = await _odFetchWithTimeout(BACKEND_ENDPOINTS.aiAnalyze, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',

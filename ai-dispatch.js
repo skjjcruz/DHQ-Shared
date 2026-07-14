@@ -10,6 +10,30 @@ window.App = window.App || {};
 (function() {
 'use strict';
 
+// ── fetch with a hard timeout ────────────────────────────────
+// Every provider fetch below had NO timeout: a stalled edge function or
+// dropped connection left the request pending forever, so Ask Alex (and
+// every other AI surface) spun on "..." with no error to catch. Abort the
+// request after AI_FETCH_TIMEOUT_MS and surface a clean, retryable error
+// instead of hanging. 45s comfortably clears a slow web-search answer while
+// still killing a true hang.
+const AI_FETCH_TIMEOUT_MS = 45000;
+function fetchWithTimeout(url, opts, ms) {
+  if (typeof AbortController === 'undefined') return fetch(url, opts); // very old runtime — no worse than before
+  const ctrl = new AbortController();
+  const timer = setTimeout(function() { ctrl.abort(); }, ms || AI_FETCH_TIMEOUT_MS);
+  return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
+    .catch(function(err) {
+      if (err && (err.name === 'AbortError' || err.code === 20)) {
+        const e = new Error('The AI request timed out. Please try again.');
+        e.timedOut = true;
+        throw e;
+      }
+      throw err;
+    })
+    .finally(function() { clearTimeout(timer); });
+}
+
 // ── AI Provider config ───────────────────────────────────────
 const AI_POLICY_VERSION = '2026-05-03.vendor-router.v1';
 const AI_MODELS = {
@@ -368,7 +392,7 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
         if(useWebSearch){body.tools=[{type:'web_search_20250305',name:'web_search'}];body.max_tokens=Math.max(maxTok,1500);}
         const headers = {'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01'};
         if(useWebSearch) headers['anthropic-beta'] = 'web-search-2025-03-05';
-        res = await fetch('https://fragrant-brook-c770.jacobcrusinberry.workers.dev/', {method:'POST', headers, body:JSON.stringify(body)});
+        res = await fetchWithTimeout('https://fragrant-brook-c770.jacobcrusinberry.workers.dev/', {method:'POST', headers, body:JSON.stringify(body)});
         if((res.status===429||res.status===529)&&attempt<_retries){await new Promise(r=>setTimeout(r,(attempt+1)*10000));continue;}
         if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'API error '+res.status);}
         data = await res.json();
@@ -378,7 +402,7 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
 
       } else if(provider === 'gemini'){
         const body = {model, max_completion_tokens:maxTok, messages:[{role:'system',content:sys},...messages]};
-        res = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey}, body:JSON.stringify(body)});
+        res = await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey}, body:JSON.stringify(body)});
         if((res.status===429)&&attempt<_retries){await new Promise(r=>setTimeout(r,(attempt+1)*10000));continue;}
         if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'API error '+res.status);}
         data = await res.json();
@@ -392,7 +416,7 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
           input: messages.map(m => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content || '' })),
           max_output_tokens: maxTok,
         };
-        res = await fetch('https://api.openai.com/v1/responses', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey}, body:JSON.stringify(body)});
+        res = await fetchWithTimeout('https://api.openai.com/v1/responses', {method:'POST', headers:{'Content-Type':'application/json','Authorization':'Bearer '+apiKey}, body:JSON.stringify(body)});
         if((res.status===429)&&attempt<_retries){await new Promise(r=>setTimeout(r,(attempt+1)*10000));continue;}
         if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'API error '+res.status);}
         data = await res.json();
