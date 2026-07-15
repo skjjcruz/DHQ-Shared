@@ -86,7 +86,7 @@ const DHQ_PROMPTS = {
 Be helpful, specific, and reference their actual roster data.
 If they ask about a specific player, include that player's DHQ value and peak window.
 If they ask "what should I do?" — give 2-3 specific, actionable moves with reasoning.
-RANKINGS: When you state the user's rank or produce power rankings, use each team's powerScore / powerRank from the context — this is the app's official Power Score (60% team strength + 40% asset value) and it's exactly what the command brief and Power Rankings widget show. Never re-sort teams by DHQ value alone or invent a different order; your "you're Nth" must match the app.
+RANKINGS: When you state the user's rank or produce power rankings, use the [POWER_RANKINGS] list in the context verbatim — it is the app's official Power Score order (rank 1 = best, "isYou" marks the user's team), already sorted and complete for every team. List teams in that exact order with their name and powerScore; never re-sort by DHQ, and never write "no owner"/skip a rank — every team is in the list. The user's "you're Nth" is their position in that list, which matches the command brief and Power Rankings widget.
 
 EXAMPLE OF AN IDEAL RESPONSE:
 User: "What moves should I make?"
@@ -1138,6 +1138,26 @@ function dhqQualityRulesBlock() {
     + '- Remaining FAAB is a weapon for mid-season breakouts and injuries — preserve it\n';
 }
 
+// Complete, pre-sorted league power ranking (ALL teams including the user), so
+// Alex answers "power rankings" from ONE authoritative list instead of stitching
+// his own team (in ROSTER_CONTEXT) together with the opponents (in OWNERS) — which
+// left gaps like "2. (No owner provided for this rank)".
+function dhqBuildPowerRankings() {
+  const S = window.S || window.App?.S || {};
+  const rosters = S.rosters || [];
+  if (!rosters.length) return '';
+  const assessFn = (typeof assessTeamFromGlobal === 'function') ? assessTeamFromGlobal
+    : (typeof window !== 'undefined' && window.assessTeamFromGlobal) ? window.assessTeamFromGlobal : null;
+  if (!assessFn) return '';
+  const rows = rosters.map(r => {
+    let a = {};
+    try { a = assessFn(r.roster_id) || {}; } catch (e) { a = {}; }
+    const name = (S.leagueUsers || []).find(u => u.user_id === r.owner_id)?.display_name || ('Team ' + r.roster_id);
+    return { rank: a.powerRank || 0, team: name, isYou: r.roster_id === S.myRosterId, powerScore: a.powerScore || 0, tier: a.tier || '' };
+  }).filter(x => x.rank > 0).sort((a, b) => a.rank - b.rank);
+  return rows.length ? JSON.stringify(rows) : '';
+}
+
 function dhqContext(includeOwners) {
   const parts = [];
   const roster = dhqBuildRosterContext(false);
@@ -1146,6 +1166,9 @@ function dhqContext(includeOwners) {
   if (mentality) parts.push('[MENTALITY]\n' + mentality);
   const league = dhqBuildLeagueContext();
   if (league) parts.push('[LEAGUE]\n' + league);
+  // The complete, authoritative power ranking — every team, already in order.
+  const power = dhqBuildPowerRankings();
+  if (power) parts.push('[POWER_RANKINGS]\nThe app\'s official league power ranking, already sorted (rank 1 = best, "isYou" marks the user). When asked for power rankings or the user\'s rank, use THIS exact order, these exact team names, and powerScore — do not re-sort by DHQ or invent/skip any team:\n' + power);
   if (includeOwners) {
     const owners = dhqBuildOwnerProfiles();
     if (owners) parts.push('[OWNERS]\n' + owners);
