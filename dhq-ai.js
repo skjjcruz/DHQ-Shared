@@ -851,13 +851,14 @@ async function dhqAI(type, message, context, options) {
   // Reasoning models on the 'standard'/'fast' tiers (e.g. gemini-2.5-flash)
   // spend hidden "thinking" tokens out of the SAME output budget as the reply.
   // With the old flat caps (home-chat 500), thinking consumed almost all of it
-  // and the visible answer was cut off mid-sentence. Reserve headroom for the
-  // thinking pass so config.maxTokens stays the ANSWER budget. This is a
-  // ceiling, not a target: the server clamps the total to the plan's output cap
-  // (Pro 4200), non-thinking models (Claude) ignore the extra room, and every
-  // model still stops when the answer is done — so it never pads a reply, it
-  // only stops thinking from eating it.
-  const THINKING_HEADROOM = 1500;
+  // and the visible answer was cut off mid-sentence. A small fixed headroom
+  // (1500) still wasn't enough — thinking on a roster question can run longer.
+  // So request a large budget and let the SERVER clamp it to the plan's real
+  // output cap (Pro 4200), which gives thinking + the answer the most room the
+  // plan allows. It's a ceiling, not a target: non-thinking models (Claude)
+  // ignore the extra room and every model stops when the answer is done, so it
+  // never pads a reply — it only stops the thinking pass from eating it.
+  const THINKING_HEADROOM = 4000;
   const maxTokens = (config.maxTokens || 500) + THINKING_HEADROOM;
   const useWebSearch = config.useWebSearch || false;
 
