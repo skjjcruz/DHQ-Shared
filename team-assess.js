@@ -550,10 +550,46 @@ window.App = window.App || {};
       weeklyTarget: WEEKLY_TARGET_DYN,
     };
 
-    return (rosters || []).map(r => {
+    const assessments = (rosters || []).map(r => {
       const ownerPicks = picksByOwner[r.roster_id] || [];
       return assessTeam(r, players, playerStats, leagueInfo, leagueUsers, nflStarterSet, ownerPicks, rosters, dynamicConfig);
     });
+
+    // ── Blended Power Score — the single "where you stand" number ──────
+    // Every surface (command brief, Power Rankings widget, elites badge, Alex)
+    // must agree, so they all read ONE score and ONE rank from here instead of
+    // each sorting by a different metric. The blend is:
+    //   powerScore = 60% team strength (healthScore 0-100)
+    //              + 40% asset value   (total roster DHQ, scaled to the
+    //                                    league's top team → 0-100)
+    // Strength = "how good are you now", assets = "how much dynasty capital you
+    // hold". Weights live here so the mix is one edit to tune.
+    const POWER_STRENGTH_W = 0.6;
+    const POWER_ASSET_W = 0.4;
+    const rosterById = {};
+    (rosters || []).forEach(r => { rosterById[r.roster_id] = r; });
+    let maxDHQ = 0;
+    assessments.forEach(a => {
+      const r = rosterById[a.rosterId];
+      const totalDHQ = (r?.players || []).reduce((s, pid) => s + getDynastyValue(pid), 0);
+      a.totalDHQ = totalDHQ;
+      if (totalDHQ > maxDHQ) maxDHQ = totalDHQ;
+    });
+    assessments.forEach(a => {
+      a.assetScore = maxDHQ > 0 ? Math.round((a.totalDHQ / maxDHQ) * 100) : 0;
+      a.powerScore = Math.round(POWER_STRENGTH_W * (a.healthScore || 0) + POWER_ASSET_W * a.assetScore);
+    });
+    // Deterministic power ranking: powerScore, then total DHQ, then a stable id
+    // tiebreak so two close teams never swap places between recomputes.
+    [...assessments]
+      .sort((x, y) => {
+        if (y.powerScore !== x.powerScore) return y.powerScore - x.powerScore;
+        if ((y.totalDHQ || 0) !== (x.totalDHQ || 0)) return (y.totalDHQ || 0) - (x.totalDHQ || 0);
+        return String(x.rosterId).localeCompare(String(y.rosterId));
+      })
+      .forEach((a, i) => { a.powerRank = i + 1; });
+
+    return assessments;
   }
 
   // ─────────────────────────────────────────────────────────────

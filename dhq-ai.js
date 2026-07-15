@@ -86,6 +86,7 @@ const DHQ_PROMPTS = {
 Be helpful, specific, and reference their actual roster data.
 If they ask about a specific player, include that player's DHQ value and peak window.
 If they ask "what should I do?" — give 2-3 specific, actionable moves with reasoning.
+RANKINGS: When you state the user's rank or produce power rankings, use each team's powerScore / powerRank from the context — this is the app's official Power Score (60% team strength + 40% asset value) and it's exactly what the command brief and Power Rankings widget show. Never re-sort teams by DHQ value alone or invent a different order; your "you're Nth" must match the app.
 
 EXAMPLE OF AN IDEAL RESPONSE:
 User: "What moves should I make?"
@@ -372,14 +373,22 @@ function dhqBuildRosterContext(compact) {
   const isSF = !!(league?.roster_positions?.includes('SUPER_FLEX'));
   const isIDP = !!(league?.roster_positions?.some(p => ['DL', 'LB', 'DB', 'IDP_FLEX'].includes(p)));
   const rp = league?.roster_positions || [];
-  // Rank by DHQ portfolio value (more meaningful than wins, especially in offseason)
   const totalVal = (my.players || []).reduce((sum, p) => sum + dynastyValue(p), 0);
-  const sortedByDHQ = [...(S.rosters || [])].map(r => ({
-    rid: r.roster_id,
-    dhq: (r.players || []).reduce((s, p) => s + dynastyValue(p), 0),
-    wins: r.settings?.wins || 0,
-  })).sort((a, b) => b.dhq - a.dhq);
-  const rank = sortedByDHQ.findIndex(r => r.rid === S.myRosterId) + 1;
+  // Rank by the blended Power Score — the SAME single source the command brief,
+  // Power Rankings widget, and elites badge use — so Alex's "you're Nth" always
+  // matches what the app shows. Falls back to DHQ-portfolio rank only if the
+  // assessment engine isn't loaded.
+  const _assessFn = (typeof assessTeamFromGlobal === 'function') ? assessTeamFromGlobal
+    : (typeof window !== 'undefined' && window.assessTeamFromGlobal) ? window.assessTeamFromGlobal : null;
+  let rank = 0;
+  try { rank = (_assessFn && _assessFn(S.myRosterId) || {}).powerRank || 0; } catch (e) { rank = 0; }
+  if (!rank) {
+    const sortedByDHQ = [...(S.rosters || [])].map(r => ({
+      rid: r.roster_id,
+      dhq: (r.players || []).reduce((s, p) => s + dynastyValue(p), 0),
+    })).sort((a, b) => b.dhq - a.dhq);
+    rank = sortedByDHQ.findIndex(r => r.rid === S.myRosterId) + 1;
+  }
 
   const peakLabel = (pid) => {
     const pos = pM(pPos(pid));
@@ -594,6 +603,14 @@ function dhqBuildOwnerProfiles() {
       .map(x => ({ name: pNameShort(x.pid), pos: pPos(x.pid), dhq: x.val }));
     const dna = LI.ownerProfiles?.[r.roster_id];
     const contending = totalVal > avgTotal * 1.1 ? 'contender' : totalVal < avgTotal * 0.85 ? 'rebuilder' : 'mid-tier';
+    // The app's official blended Power Score/rank for this team, so any ranking
+    // Alex produces matches the brief and widget instead of re-sorting by DHQ.
+    let _oPowerScore = 0, _oPowerRank = 0;
+    try {
+      const _oa = (typeof assessTeamFromGlobal === 'function') ? assessTeamFromGlobal(r.roster_id)
+        : (typeof window !== 'undefined' && window.assessTeamFromGlobal) ? window.assessTeamFromGlobal(r.roster_id) : null;
+      if (_oa) { _oPowerScore = _oa.powerScore || 0; _oPowerRank = _oa.powerRank || 0; }
+    } catch (e) { /* assessment optional */ }
 
     // Championship + tenure data
     const champs = champCounts[r.roster_id] || 0;
@@ -610,6 +627,8 @@ function dhqBuildOwnerProfiles() {
       record: record,
       tier: contending,
       dhqTotal: totalVal,
+      powerScore: _oPowerScore,
+      powerRank: _oPowerRank,
       championships: champs,
       runnerUps: runners,
       playoffAppearances: 0, // populated when bracket data is richer
