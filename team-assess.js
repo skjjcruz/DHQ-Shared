@@ -625,6 +625,60 @@ window.App = window.App || {};
     return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|sc' + scoreCount + '|st' + statCount + '|tp' + ((S.tradedPicks || []).length) + '|' + fp;
   }
 
+  // ── Stability pin ────────────────────────────────────────────────
+  // The assessment recomputes as player scores + stats stream in, so a health
+  // score (and therefore tier, powerScore, and every rank) could read one value
+  // mid-load and a different one a second later — the brief showing 73/CROSSROADS
+  // then 81/CONTENDER on the same team. Fix: once the data is fully loaded, PIN
+  // the whole assessment to localStorage keyed by the raw league state (every
+  // roster's players + record + week). On later loads/refreshes we serve that
+  // pinned snapshot immediately and never recompute until the league state
+  // actually changes — so the numbers stay identical unless something real moved.
+  var _PIN_PREFIX = 'dhq_power_pin_v2:';
+
+  function _rosterFingerprint() {
+    var S = window.S || window.App?.S || {};
+    var rosters = S.rosters || [];
+    var fp = '';
+    for (var i = 0; i < rosters.length; i++) {
+      var r = rosters[i];
+      var st = r.settings || {};
+      fp += r.roster_id + ':' + ((r.players || []).slice().sort().join('.')) +
+        ':' + ((st.wins || 0) + '-' + (st.losses || 0) + '-' + (st.ties || 0)) + ';';
+    }
+    var week = (S.nflState && S.nflState.week) || S.currentWeek || '';
+    return (S.currentLeagueId || '') + '|w' + week + '|' + fp;
+  }
+
+  // Data is "ready" to pin only when the inputs the health score depends on have
+  // fully landed: the LI score build finished AND at least some player stats
+  // loaded. Pinning before this would freeze a half-loaded (wrong) value.
+  function _dataReady() {
+    try {
+      var S = window.S || window.App?.S || {};
+      var LI = window.App?.LI || window.LI || {};
+      var liReady = !!(window.App && window.App.LI_LOADED) || !!LI.builtAt;
+      var scoresReady = Object.keys(LI.playerScores || {}).length > 0;
+      var statsReady = Object.keys(S.playerStats || {}).length > 0;
+      return liReady && scoresReady && statsReady;
+    } catch (e) { return false; }
+  }
+
+  function _pinKey() {
+    var S = window.S || window.App?.S || {};
+    return _PIN_PREFIX + (S.currentLeagueId || '_');
+  }
+  function _loadPin(fp) {
+    try {
+      var raw = JSON.parse((window.localStorage && window.localStorage.getItem(_pinKey())) || 'null');
+      return (raw && raw.fp === fp && Array.isArray(raw.data) && raw.data.length) ? raw.data : null;
+    } catch (e) { return null; }
+  }
+  function _savePin(fp, data) {
+    try { if (window.localStorage) window.localStorage.setItem(_pinKey(), JSON.stringify({ fp: fp, data: data })); }
+    catch (e) { /* storage blocked/full — non-fatal, we just recompute next time */ }
+  }
+
   function buildNflStarterSetFromGlobal() {
     const S = window.S || window.App?.S;
     if (!S?.players) return {};
@@ -646,10 +700,30 @@ window.App = window.App || {};
     if (!S?.rosters?.length) return [];
     const sig = _assessSig();
     if (_assessCache.sig === sig && _assessCache.all) return _assessCache.all;
+
+    // Stability: if we have a pinned full-data snapshot for the CURRENT league
+    // state (same rosters + week), serve it and don't recompute — this is what
+    // stops the score/rank from settling on every load or refresh. Any real
+    // change (a trade, an add/drop, the week turning) changes the fingerprint,
+    // so the pin misses and we compute fresh below.
+    const rfp = _rosterFingerprint();
+    const pinned = _loadPin(rfp);
+    if (pinned) {
+      const pinnedById = new Map(pinned.map(a => [a.rosterId, a]));
+      _assessCache = { sig, all: pinned, byId: pinnedById };
+      return pinned;
+    }
+
     const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);
     const all = assessAllTeams(S.rosters, S.players, S.playerStats, league, S.leagueUsers, S.tradedPicks);
     const byId = new Map(all.map(a => [a.rosterId, a]));
     _assessCache = { sig, all, byId };
+
+    // Pin ONLY once the data is fully loaded, so we never freeze a half-loaded
+    // value. Until then we keep returning the best-effort computation (which the
+    // sig-based cache lets settle as data lands on this first load); the pin then
+    // keeps every later load rock-steady.
+    if (_dataReady()) _savePin(rfp, all);
     return all;
   }
 
