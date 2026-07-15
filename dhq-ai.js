@@ -87,6 +87,7 @@ Be helpful, specific, and reference their actual roster data.
 If they ask about a specific player, include that player's DHQ value and peak window.
 If they ask "what should I do?" — give 2-3 specific, actionable moves with reasoning.
 RANKINGS: When you state the user's rank or produce power rankings, use the [POWER_RANKINGS] list in the context verbatim — it is the app's official Power Score order (rank 1 = best, "isYou" marks the user's team), already sorted and complete for every team. List teams in that exact order with their name and powerScore; never re-sort by DHQ, and never write "no owner"/skip a rank — every team is in the list. The user's "you're Nth" is their position in that list, which matches the command brief and Power Rankings widget.
+STRENGTHS & WEAKNESSES: Ground EVERY position strength/weakness claim in the roster context's "roomStatus" — the app's startable-depth read, the SAME source the Analytics room grades and "Rooms to Fix First" use. A position is a STRENGTH only when its status is "surplus" (or it appears in "surpluses"); it is a WEAKNESS when its status is "deficit" or "thin" (or it appears in "gaps"). This is about STARTABLE DEPTH, not one player's value: a single elite player at a "thin"/"deficit" room is "elite top-end but thin depth" — NEVER call that room a strength, because the rest of the app calls it a room to fix. When roomStatus is present, never label a room a strength that roomStatus marks thin/deficit, and never call a room weak that it marks surplus.
 
 EXAMPLE OF AN IDEAL RESPONSE:
 User: "What moves should I make?"
@@ -443,14 +444,33 @@ function dhqBuildRosterContext(compact) {
   const offPositions = ['QB', 'RB', 'WR', 'TE'];
   const idpPositions = ['DL', 'LB', 'DB'];
   const allPositions = isIDP ? offPositions.concat(idpPositions) : offPositions;
-  const gaps = [];
-  const surpluses = [];
-  allPositions.forEach(pos => {
-    const need = rp.filter(sl => sl === pos || (sl === 'FLEX' && ['RB', 'WR', 'TE'].includes(pos)) || (sl === 'SUPER_FLEX' && pos === 'QB') || (sl === 'IDP_FLEX' && idpPositions.includes(pos))).length;
-    const have = posCounts[pos] || 0;
-    if (have <= need) gaps.push(pos);
-    if (have >= need + 3) surpluses.push(pos);
-  });
+
+  // Position strength/need is read from the ONE assessment engine (posAssessment)
+  // — the SAME startable-depth read that powers the widgets, "Rooms to Fix First",
+  // and the A–F room grades. A room is a strength only when it has enough
+  // STARTABLE-quality bodies (nflStarters >= minQuality); one elite player on an
+  // otherwise-thin room is depth risk, NOT a strength. This is the fix for Alex
+  // calling DL a strength while every widget said "Upgrade DL room": both now read
+  // the same source. Fall back to a raw headcount only if the engine isn't loaded.
+  const myAssess = _assessFn ? (() => { try { return _assessFn(S.myRosterId); } catch (e) { return null; } })() : null;
+  let gaps, surpluses, roomStatus = null;
+  if (myAssess && myAssess.posAssessment) {
+    roomStatus = {};
+    Object.entries(myAssess.posAssessment).forEach(([pos, v]) => {
+      roomStatus[pos] = { status: v.status, startableHave: v.nflStarters, startableNeed: v.minQuality, depth: v.actual };
+    });
+    gaps = (myAssess.needs || []).map(n => (n && (n.pos || n.position)) || n).filter(Boolean);
+    surpluses = (myAssess.strengths || []).slice();
+  } else {
+    gaps = [];
+    surpluses = [];
+    allPositions.forEach(pos => {
+      const need = rp.filter(sl => sl === pos || (sl === 'FLEX' && ['RB', 'WR', 'TE'].includes(pos)) || (sl === 'SUPER_FLEX' && pos === 'QB') || (sl === 'IDP_FLEX' && idpPositions.includes(pos))).length;
+      const have = posCounts[pos] || 0;
+      if (have <= need) gaps.push(pos);
+      if (have >= need + 3) surpluses.push(pos);
+    });
+  }
 
   const picks = (S.tradedPicks || [])
     .filter(p => p.owner_id === S.myRosterId)
@@ -478,6 +498,7 @@ function dhqBuildRosterContext(compact) {
     format: formatStr,
     gaps: gaps,
     surpluses: surpluses,
+    roomStatus: roomStatus,
     picks: picks,
     faab: faab,
     idpScoring: idpScoring,
