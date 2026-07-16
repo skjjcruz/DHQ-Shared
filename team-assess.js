@@ -647,7 +647,15 @@ window.App = window.App || {};
         ':' + ((st.wins || 0) + '-' + (st.losses || 0) + '-' + (st.ties || 0)) + ';';
     }
     var week = (S.nflState && S.nflState.week) || S.currentWeek || '';
-    return (S.currentLeagueId || '') + '|w' + week + '|' + fp;
+    // Refresh the pin once a day. The fingerprint above only covers roster,
+    // record, and week — but player DHQ values update daily (FantasyCalc), so
+    // without a day stamp the pinned rank freezes at an old value even as the
+    // roster gains or loses value over the week (e.g. a team stuck showing #8
+    // after climbing to #6). The day stamp keeps the number rock-steady within a
+    // day — no reload swing — but lets it re-settle to the current value daily.
+    var day = '';
+    try { day = new Date().toISOString().slice(0, 10); } catch (e) { day = ''; }
+    return (S.currentLeagueId || '') + '|w' + week + '|d' + day + '|' + fp;
   }
 
   // Data is "ready" to pin only when the inputs the health score depends on have
