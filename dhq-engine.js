@@ -1428,16 +1428,21 @@ async function loadLeagueIntel(){
       starterCounts,
       includeDefense:true
     }):null;
-    const baseDynastyWeight={QB:1.0,RB:1.0,WR:1.0,TE:0.95,K:0.30,DL:_idpWt,LB:_idpWt,DB:_idpWt};
+    const baseDynastyWeight={QB:1.0,RB:1.0,WR:1.0,TE:0.95,K:0.20,DL:_idpWt,LB:_idpWt,DB:_idpWt};
     const posDynastyWeight={};
     positions.forEach(pos=>{
       const lineupPos=lineupContext?.position?.[pos]||null;
       const formatWeight=lineupPos?.importance||scoringWeight[pos]||1;
       let baseWeight=baseDynastyWeight[pos]||0.80;
       if(pos==='K'&&lineupPos){
+        // Kickers are fungible in dynasty (waiver kickers score 6-8 PPG), so
+        // they stay cheap even when a format leans on them — a top kicker lands
+        // in the low hundreds, replacement near zero. The criticality lift only
+        // nudges within a tight band (0.10–0.20) instead of pulling kickers back
+        // up toward skill-position money.
         const criticality=Math.max(lineupPos.pointsRatio||0,lineupPos.marginalRatio||0);
         const criticalityLift=Math.max(0,Math.min(1,(criticality-0.75)/3));
-        baseWeight=0.30+(0.70*criticalityLift);
+        baseWeight=0.20+(0.10*criticalityLift);
       }
       posDynastyWeight[pos]=+(baseWeight*formatWeight).toFixed(3);
     });
@@ -1510,23 +1515,30 @@ async function loadLeagueIntel(){
                        productionPct >= 0.40 ? 0.40 :  // Fringe: reduced bonus
                        productionPct >= 0.20 ? 0.15 :  // Backup: minimal bonus
                        0.0;                             // Deep backup: no peak bonus
-      const peakBonus = Math.min(1000, p.peakYrsLeft * 120 * peakMult);
+      // Kickers are fungible in dynasty — they don't accrue the dynasty-value
+      // floors real positions do (scarcity premium, peak-years capital,
+      // longevity/consistency). Gating these off leaves a kicker's value driven
+      // by production alone, so a top kicker lands in the low hundreds and a
+      // replacement-level kicker sits near zero, instead of the whole position
+      // being compressed up near skill-position money.
+      const isKicker=p.pos==='K';
+      const peakBonus = isKicker ? 0 : Math.min(1000, p.peakYrsLeft * 120 * peakMult);
 
       // Consistency bonus — but NOT for unrostered players (nobody wants them)
       const isUnrostered=!rosteredSet.has(p.pid);
-      const consistencyBonus=isUnrostered?0:(p.starterSeasons>=4?400:p.starterSeasons>=3?300:p.starterSeasons>=2?150:0);
+      const consistencyBonus=(isUnrostered||isKicker)?0:(p.starterSeasons>=4?400:p.starterSeasons>=3?300:p.starterSeasons>=2?150:0);
 
       // Durability micro-bonus (not for unrostered)
-      const durabilityBonus=isUnrostered?0:(p.recentGP>=16?100:p.recentGP>=13?50:0);
+      const durabilityBonus=(isUnrostered||isKicker)?0:(p.recentGP>=16?100:p.recentGP>=13?50:0);
 
       // Scarcity doesn't apply to unrostered players
       // ALSO reduced for players below starter threshold — backups don't create scarcity
       const leagueStarterPool=Math.max(1,Math.round((starterCounts[p.pos]||1)*totalTeams));
       const insideLeagueStarterPool=p.posRank>0&&p.posRank<=leagueStarterPool;
-      const scarcityFinal = isUnrostered ? 0 : 
+      const scarcityFinal = (isUnrostered || isKicker) ? 0 :
                            (productionPct >= 0.50 || insideLeagueStarterPool) ? scarcityScore :
                            productionPct >= 0.30 ? Math.round(scarcityScore * 0.25) :
-                           0; // Deep backups get zero scarcity premium
+                           0; // Deep backups (and kickers) get zero scarcity premium
 
       // Trend modifier — in-season only, capped at ±8%
       // A +30% trending player gets ~+5% DHQ boost; -30% gets ~-5% penalty
