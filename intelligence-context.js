@@ -58,6 +58,8 @@
     deep_lineup: 'Deep lineup',
     first_down_bonus: 'First-down bonus',
     yardage_bonus: 'Yardage bonus',
+    lineup_gap: 'Lineup gap',
+    gm_plan: 'GM plan fit',
   };
 
   const CONFIDENCE_RANK = { high: 3, medium: 2, low: 1 };
@@ -1855,6 +1857,37 @@
     });
   }
 
+  // Lineup/start-sit — the weekly bench-points gap. First-class type so the
+  // Intel Brief (and any Game Day surface) can publish it and Alex's
+  // [TOP_RECOMMENDATIONS] digest offers it up like every other rec. Score
+  // scales with the projected delta so a 12-pt gap outranks a 2-pt one.
+  function buildLineupRecommendation(input) {
+    const data = input || {};
+    const delta = num(data.delta, 0);
+    const swap = (Array.isArray(data.swaps) && data.swaps[0]) || null;
+    const sourceKey = normalizeSourceKey(data.sourceKey || data.source || 'sleeper');
+    const sourceDef = getSourceDefinition(sourceKey);
+    const reasons = data.reasons || [
+      { code: 'lineup_gap', detail: data.detail || `Projected lineup sits ${delta.toFixed(1)} pts short of optimal for week ${data.week || '?'}.` },
+    ];
+    if (!data.reasons && data.gmPlanNote) reasons.push({ code: 'gm_plan', detail: data.gmPlanNote });
+    return createRecommendation({
+      id: data.id || `lineup_w${data.week || 0}_${data.rosterId || 'me'}`,
+      type: 'lineup',
+      subject: data.subject || (swap && (swap.pid || swap.name)
+        ? { id: swap.pid || '', name: swap.name || '', pos: swap.pos || '' }
+        : { id: 'lineup', name: `Week ${data.week || '?'} lineup` }),
+      action: data.action || 'start',
+      score: data.score != null ? data.score : Math.min(100, Math.max(35, Math.round(55 + delta * 4))),
+      reasons,
+      evidence: data.evidence || [buildSourceEvidence({ sourceKey, source: data.source || sourceDef.label || 'weekly projections', signal: data.signal || 'bench_delta_pts', value: delta > 0 ? delta.toFixed(1) : null, freshness: data.freshness || 'live', present: delta > 0 })],
+      headline: data.headline || `${delta.toFixed(1)} projected pts on the bench`,
+      detail: data.detail || (swap && swap.name ? `Start ${swap.name}${swap.pos ? ` (${swap.pos})` : ''} in week ${data.week || '?'}.` : ''),
+      badge: data.badge || 'Lineup',
+      clickTarget: data.clickTarget || null,
+    });
+  }
+
   function buildBehavioralRecommendation(input) {
     const data = input || {};
     const focus = data.focus || data.insight?.focus || 'gmStyle';
@@ -2142,6 +2175,7 @@
     buildRosterRecommendation,
     buildDraftRecommendation,
     buildMarketAlertRecommendation,
+    buildLineupRecommendation,
     buildBehavioralRecommendation,
     recommendationWhyLines,
     buildWhyView,
