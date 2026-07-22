@@ -1428,21 +1428,20 @@ async function loadLeagueIntel(){
       starterCounts,
       includeDefense:true
     }):null;
-    const baseDynastyWeight={QB:1.0,RB:1.0,WR:1.0,TE:0.95,K:0.20,DL:_idpWt,LB:_idpWt,DB:_idpWt};
+    const baseDynastyWeight={QB:1.0,RB:1.0,WR:1.0,TE:0.95,K:0.30,DL:_idpWt,LB:_idpWt,DB:_idpWt};
     const posDynastyWeight={};
     positions.forEach(pos=>{
       const lineupPos=lineupContext?.position?.[pos]||null;
       const formatWeight=lineupPos?.importance||scoringWeight[pos]||1;
       let baseWeight=baseDynastyWeight[pos]||0.80;
       if(pos==='K'&&lineupPos){
-        // Kickers are fungible in dynasty (waiver kickers score 6-8 PPG), so
-        // they stay cheap even when a format leans on them — a top kicker lands
-        // in the low hundreds, replacement near zero. The criticality lift only
-        // nudges within a tight band (0.10–0.20) instead of pulling kickers back
-        // up toward skill-position money.
+        // Kicker calibration: replacement legs stay near zero (no scarcity or
+        // peak floors), but the criticality band is wide enough that formats
+        // leaning on kickers price the proven difference-makers meaningfully
+        // (up to 0.75 weight) without returning to full skill-position money.
         const criticality=Math.max(lineupPos.pointsRatio||0,lineupPos.marginalRatio||0);
         const criticalityLift=Math.max(0,Math.min(1,(criticality-0.75)/3));
-        baseWeight=0.20+(0.10*criticalityLift);
+        baseWeight=0.30+(0.45*criticalityLift);
       }
       posDynastyWeight[pos]=+(baseWeight*formatWeight).toFixed(3);
     });
@@ -1515,21 +1514,20 @@ async function loadLeagueIntel(){
                        productionPct >= 0.40 ? 0.40 :  // Fringe: reduced bonus
                        productionPct >= 0.20 ? 0.15 :  // Backup: minimal bonus
                        0.0;                             // Deep backup: no peak bonus
-      // Kickers are fungible in dynasty — they don't accrue the dynasty-value
-      // floors real positions do (scarcity premium, peak-years capital,
-      // longevity/consistency). Gating these off leaves a kicker's value driven
-      // by production alone, so a top kicker lands in the low hundreds and a
-      // replacement-level kicker sits near zero, instead of the whole position
-      // being compressed up near skill-position money.
+      // Kicker calibration: scarcity and peak-years floors stay OFF (any waiver
+      // leg replaces the position's floor, and youth isn't kicker capital), but
+      // consistency and durability stay ON — those are exactly what separates a
+      // proven game-changing kicker from a JAG. Result: elite proven kickers
+      // price meaningfully high, replacement legs stay near zero.
       const isKicker=p.pos==='K';
       const peakBonus = isKicker ? 0 : Math.min(1000, p.peakYrsLeft * 120 * peakMult);
 
       // Consistency bonus — but NOT for unrostered players (nobody wants them)
       const isUnrostered=!rosteredSet.has(p.pid);
-      const consistencyBonus=(isUnrostered||isKicker)?0:(p.starterSeasons>=4?400:p.starterSeasons>=3?300:p.starterSeasons>=2?150:0);
+      const consistencyBonus=isUnrostered?0:(p.starterSeasons>=4?400:p.starterSeasons>=3?300:p.starterSeasons>=2?150:0);
 
       // Durability micro-bonus (not for unrostered)
-      const durabilityBonus=(isUnrostered||isKicker)?0:(p.recentGP>=16?100:p.recentGP>=13?50:0);
+      const durabilityBonus=isUnrostered?0:(p.recentGP>=16?100:p.recentGP>=13?50:0);
 
       // Scarcity doesn't apply to unrostered players
       // ALSO reduced for players below starter threshold — backups don't create scarcity
