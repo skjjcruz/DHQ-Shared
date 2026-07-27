@@ -17,7 +17,10 @@ window.App = window.App || {};
 // request after AI_FETCH_TIMEOUT_MS and surface a clean, retryable error
 // instead of hanging. 45s comfortably clears a slow web-search answer while
 // still killing a true hang.
-const AI_FETCH_TIMEOUT_MS = 45000;
+// 120s, not 45s: web-search-backed reads legitimately run 60-100s (p95 hit
+// 98s on 2026-07-27) — the old 45s abort made the client hang up on answers
+// the server then finished and billed anyway.
+const AI_FETCH_TIMEOUT_MS = 120000;
 function fetchWithTimeout(url, opts, ms) {
   if (typeof AbortController === 'undefined') return fetch(url, opts); // very old runtime — no worse than before
   const ctrl = new AbortController();

@@ -26,7 +26,10 @@ const BACKEND_ENDPOINTS = {
 // to catch. Abort after OD_AI_TIMEOUT_MS and throw a clean, retryable error
 // so the chat can recover instead of spinning. Unique name — the sibling
 // helper in ai-dispatch.js is IIFE-scoped, so there is no collision.
-const OD_AI_TIMEOUT_MS = 45000;
+// 120s, not 45s: web-search-backed reads legitimately run 60-100s (p95 hit
+// 98s on 2026-07-27) — the old 45s abort made the client hang up on answers
+// the server then finished and billed anyway.
+const OD_AI_TIMEOUT_MS = 120000;
 const _odFetchWithTimeout = function(url, opts, ms) {
     if (typeof AbortController === 'undefined') return fetch(url, opts);
     const ctrl = new AbortController();
