@@ -1649,7 +1649,13 @@ function inferPlatform(payload) {
 }
 
 function currentAnalyticsModule() {
-    return window.S?.activeTab || window.App?.activeTab || document.querySelector('.panel.active')?.id || null;
+    // Page-name fallback keeps module from ever landing null: events fired
+    // outside the league shell (hub, landing, connect) tag the page they
+    // came from instead of surfacing as "unknown" in Mission Control
+    // (owner ask 2026-07-30).
+    const page = ((window.location.pathname || '/').split('/').pop() || 'index.html')
+        .replace(/\.html?$/i, '') || 'index';
+    return window.S?.activeTab || window.App?.activeTab || document.querySelector('.panel.active')?.id || page;
 }
 
 function safeAnalyticsRoute() {
