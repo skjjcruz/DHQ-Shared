@@ -1648,6 +1648,20 @@ function inferPlatform(payload) {
     return 'reconai';
 }
 
+// Which door the person came through: the native iOS shell (WKWebView) or a
+// regular browser. On iOS/iPadOS every real browser UA carries a Safari/ token
+// (Safari itself plus CriOS/FxiOS/EdgiOS shells); a bare AppleWebKit UA with
+// none of those is the app's WKWebView. iPads report "Macintosh" when they
+// request desktop pages, so that string counts as an Apple device here.
+function detectSurface() {
+    try {
+        const ua = navigator.userAgent || '';
+        const apple = /iPhone|iPad|iPod|Macintosh/.test(ua);
+        const webview = apple && /AppleWebKit/.test(ua) && !/Safari\//.test(ua);
+        return webview ? 'ios_app' : 'web';
+    } catch (e) { return 'web'; }
+}
+
 function currentAnalyticsModule() {
     // Page-name fallback keeps module from ever landing null: events fired
     // outside the league shell (hub, landing, connect) tag the page they
@@ -1766,6 +1780,8 @@ window.OD.track = function(eventName, payload = {}) {
             entity_id: payload.entityId != null ? String(payload.entityId) : null,
             metadata: safeAnalyticsMeta({
                 route: safeAnalyticsRoute(),
+                surface: detectSurface(),
+                host: location.hostname || null,
                 ...payload.metadata,
             }),
         };
