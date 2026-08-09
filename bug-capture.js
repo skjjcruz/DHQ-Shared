@@ -123,6 +123,13 @@
         errorName: error?.name || 'Error',
         sentryEventId: eventId || null,
         handled: tags?.handled !== false,
+        metadata: {
+          // Where in the app the error was raised (e.g. 'viewport.nudge',
+          // 'storage.set:wr_sos_wk_…') plus a scrubbed message snippet —
+          // without these the admin error table can only say "wrLog: Error".
+          context: (tags?.context ? String(tags.context) : null),
+          errorDetail: scrubString(error?.message || '').slice(0, 140) || null,
+        },
       });
     } catch {}
   }
