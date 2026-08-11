@@ -113,6 +113,13 @@
     });
   }
 
+  // "[object Object]" is a stringified object, not information — dashboard
+  // rows must show real text or nothing (owner report 2026-08-11).
+  function cleanLabel(value) {
+    if (typeof value !== 'string' || !value) return null;
+    return value.includes('[object ') ? null : value;
+  }
+
   function trackClientError(error, tags, eventId) {
     try {
       if (!window.OD?.trackClientError) return;
@@ -127,8 +134,8 @@
           // Where in the app the error was raised (e.g. 'viewport.nudge',
           // 'storage.set:wr_sos_wk_…') plus a scrubbed message snippet —
           // without these the admin error table can only say "wrLog: Error".
-          context: (tags?.context ? String(tags.context) : null),
-          errorDetail: scrubString(error?.message || '').slice(0, 140) || null,
+          context: cleanLabel(tags?.context ? String(tags.context) : null),
+          errorDetail: cleanLabel(scrubString(error?.message || '').slice(0, 140)),
         },
       });
     } catch {}
