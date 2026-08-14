@@ -1085,6 +1085,62 @@ window.OD.savePlayerTags = async function(leagueId, tags) {
     } catch (e) { console.warn('[FW] player_tags save failed:', e); }
 };
 
+// ── League KV docs — small per-league JSON blobs that must follow the ──
+// ── user across devices (the native app's WKWebView and Safari have   ──
+// ── separate localStorage, so device-local state splits the brain).   ──
+// Stored as extra rows in player_tags with a suffixed league_id (the
+// table's tags column is unconstrained jsonb and RLS keys on the owner,
+// not the league string). Docs carry ts so newest-wins merges are cheap.
+// Owner report 2026-08-13: roster verdicts and the Intel Brief baseline
+// disagreed between the app and the website.
+const LEAGUE_DOC_LS_KEY = (leagueId, kind) => 'dhq_league_doc_' + kind + ':' + (leagueId || '');
+
+window.OD.saveLeagueDoc = async function(leagueId, kind, doc) {
+    const stamped = { ...(doc || {}), ts: Date.now() };
+    try { localStorage.setItem(LEAGUE_DOC_LS_KEY(leagueId, kind), JSON.stringify(stamped)); } catch {}
+    const owner = getOwnerIdentity();
+    const db = getClient();
+    if (!db || !isConfigured() || !hasOwnerIdentity()) return stamped;
+    try {
+        await ensureUser(owner.username);
+        const { error } = await db.from('player_tags').upsert({
+            ...ownerCols(owner),
+            league_id: (leagueId || '') + ':' + kind,
+            tags: stamped,
+            updated_at: new Date().toISOString(),
+        }, { onConflict: ownerConflict(owner, 'username,league_id', 'user_id,league_id') });
+        if (error) console.warn('[FW] league_doc save error', kind, error);
+    } catch (e) { console.warn('[FW] league_doc save failed:', kind, e); }
+    return stamped;
+};
+
+window.OD.loadLeagueDoc = async function(leagueId, kind) {
+    let local = null;
+    try {
+        const raw = localStorage.getItem(LEAGUE_DOC_LS_KEY(leagueId, kind));
+        if (raw) local = JSON.parse(raw);
+    } catch {}
+    const owner = getOwnerIdentity();
+    const db = getClient();
+    if (db && isConfigured() && hasOwnerIdentity()) {
+        try {
+            const { data, error } = await applyOwnerFilter(
+                db.from('player_tags').select('tags, updated_at'), owner
+            )
+                .eq('league_id', (leagueId || '') + ':' + kind)
+                .maybeSingle();
+            if (!error && data?.tags) {
+                const remote = data.tags;
+                // Newest wins between this device and the cloud.
+                const winner = (!local || (remote.ts || 0) >= (local.ts || 0)) ? remote : local;
+                try { localStorage.setItem(LEAGUE_DOC_LS_KEY(leagueId, kind), JSON.stringify(winner)); } catch {}
+                return winner;
+            }
+        } catch (e) { console.warn('[FW] league_doc load failed:', kind, e); }
+    }
+    return local;
+};
+
 window.OD.loadPlayerTags = async function(leagueId) {
     // Try localStorage first (fast)
     let local = {};
