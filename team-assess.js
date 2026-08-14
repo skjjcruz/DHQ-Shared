@@ -692,10 +692,29 @@ window.App = window.App || {};
     // Each device used to pin its own daily snapshot — the native app's
     // WKWebView and Safari would pin at different moments with different
     // score builds and then argue (#10 vs #8) all day (owner reports
-    // 2026-08-13, twice). Last publisher wins; everyone else adopts below.
+    // 2026-08-13, twice). FIRST publisher of the day wins: before pushing
+    // our numbers we check whether another surface already published for
+    // this same league state, and if so we adopt theirs instead of
+    // clobbering the shared copy — a last-publisher-wins race let a
+    // late-opening device overwrite the cloud pin and the surfaces traded
+    // places instead of agreeing (owner report 2026-08-14).
     try {
       var S = window.S || window.App?.S || {};
-      window.OD?.saveLeagueDoc?.(S.currentLeagueId || '_', 'powerpin', { fp: fp, data: data });
+      var lid = S.currentLeagueId || '_';
+      var publish = function () {
+        try { window.OD?.saveLeagueDoc?.(lid, 'powerpin', { fp: fp, data: data }); }
+        catch (e) { /* cloud unavailable — local pin still serves this device */ }
+      };
+      if (window.OD && window.OD.loadLeagueDoc) {
+        window.OD.loadLeagueDoc(lid, 'powerpin').then(function (doc) {
+          if (doc && doc.fp === fp && Array.isArray(doc.data) && doc.data.length) {
+            if (JSON.stringify(doc.data) === JSON.stringify(data)) return; // already agree
+            _writePinLocal(fp, doc.data);
+            _assessCache = { sig: null, all: null, byId: null };
+            try { window.DhqEvents && window.DhqEvents.emit && window.DhqEvents.emit('assess:pin-adopted', {}); } catch (e2) {}
+          } else publish();
+        }).catch(publish);
+      } else publish();
     } catch (e) { /* cloud unavailable — local pin still serves this device */ }
   }
   // Adopt the shared cloud pin for the current fingerprint. Async by nature;
@@ -711,8 +730,16 @@ window.App = window.App || {};
       if (_pinCloudCheckedFp === fp) return; // once per league-state per session
       _pinCloudCheckedFp = fp;
       window.OD.loadLeagueDoc(lid, 'powerpin').then(function (doc) {
-        if (!doc || doc.fp !== fp || !Array.isArray(doc.data) || !doc.data.length) return;
         var local = _loadPin(fp);
+        if (!doc || doc.fp !== fp || !Array.isArray(doc.data) || !doc.data.length) {
+          // Cloud has nothing for today's league state. If this device already
+          // holds a pin (computed before the sync code arrived, or while the
+          // cloud was unreachable), publish it — otherwise no surface ever
+          // publishes today and every device keeps its own numbers until the
+          // next day rolls the fingerprint (owner report 2026-08-14).
+          if (local) { try { window.OD.saveLeagueDoc(lid, 'powerpin', { fp: fp, data: local }); } catch (e3) {} }
+          return;
+        }
         if (local && JSON.stringify(local) === JSON.stringify(doc.data)) return;
         _writePinLocal(fp, doc.data);
         _assessCache = { sig: null, all: null, byId: null };
