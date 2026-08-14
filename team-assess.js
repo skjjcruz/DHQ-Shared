@@ -682,9 +682,51 @@ window.App = window.App || {};
       return (raw && raw.fp === fp && Array.isArray(raw.data) && raw.data.length) ? raw.data : null;
     } catch (e) { return null; }
   }
-  function _savePin(fp, data) {
-    try { if (window.localStorage) window.localStorage.setItem(_pinKey(), JSON.stringify({ fp: fp, data: data })); }
+  function _writePinLocal(fp, data) {
+    try { if (window.localStorage) window.localStorage.setItem(_pinKey(), JSON.stringify({ fp: fp, data: data, ts: Date.now() })); }
     catch (e) { /* storage blocked/full — non-fatal, we just recompute next time */ }
+  }
+  function _savePin(fp, data) {
+    _writePinLocal(fp, data);
+    // Publish to the cloud so every surface serves the SAME pinned numbers.
+    // Each device used to pin its own daily snapshot — the native app's
+    // WKWebView and Safari would pin at different moments with different
+    // score builds and then argue (#10 vs #8) all day (owner reports
+    // 2026-08-13, twice). Last publisher wins; everyone else adopts below.
+    try {
+      var S = window.S || window.App?.S || {};
+      window.OD?.saveLeagueDoc?.(S.currentLeagueId || '_', 'powerpin', { fp: fp, data: data });
+    } catch (e) { /* cloud unavailable — local pin still serves this device */ }
+  }
+  // Adopt the shared cloud pin for the current fingerprint. Async by nature;
+  // when it lands, the memo cache is dropped so the very next assessment call
+  // (every consumer re-renders constantly) serves the shared numbers.
+  var _pinCloudCheckedFp = '';
+  function _adoptCloudPin() {
+    try {
+      var S = window.S || window.App?.S || {};
+      var lid = S.currentLeagueId || '';
+      if (!lid || !window.OD || !window.OD.loadLeagueDoc) return;
+      var fp = _rosterFingerprint();
+      if (_pinCloudCheckedFp === fp) return; // once per league-state per session
+      _pinCloudCheckedFp = fp;
+      window.OD.loadLeagueDoc(lid, 'powerpin').then(function (doc) {
+        if (!doc || doc.fp !== fp || !Array.isArray(doc.data) || !doc.data.length) return;
+        var local = _loadPin(fp);
+        if (local && JSON.stringify(local) === JSON.stringify(doc.data)) return;
+        _writePinLocal(fp, doc.data);
+        _assessCache = { sig: null, all: null, byId: null };
+        try { window.DhqEvents && window.DhqEvents.emit && window.DhqEvents.emit('assess:pin-adopted', {}); } catch (e2) {}
+      }).catch(function () { /* offline — keep the local pin */ });
+    } catch (e) { /* never let sync break assessment */ }
+  }
+  // When this device's pin was computed/adopted — surfaces show it as
+  // "as of <time>" so a daily-stable number identifies its own age.
+  function powerPinTs() {
+    try {
+      var raw = JSON.parse((window.localStorage && window.localStorage.getItem(_pinKey())) || 'null');
+      return (raw && raw.ts) || null;
+    } catch (e) { return null; }
   }
 
   function buildNflStarterSetFromGlobal() {
@@ -706,6 +748,7 @@ window.App = window.App || {};
   function assessAllTeamsFromGlobal() {
     const S = window.S || window.App?.S;
     if (!S?.rosters?.length) return [];
+    _adoptCloudPin(); // async, once per league-state — see the pin block above
     const sig = _assessSig();
     if (_assessCache.sig === sig && _assessCache.all) return _assessCache.all;
 
@@ -943,6 +986,7 @@ window.App = window.App || {};
   window.App.buildNflStarterSetFromGlobal = buildNflStarterSetFromGlobal;
   window.App.assessAllTeamsFromGlobal     = assessAllTeamsFromGlobal;
   window.App.assessTeamFromGlobal         = assessTeamFromGlobal;
+  window.App.powerPinTs                   = powerPinTs;
 
   // Player action recommendation
   window.App.getPlayerAction = getPlayerAction;
