@@ -96,8 +96,20 @@ function initTrial() {
 // DEV_MODE bypass, server-loaded in-memory cache, trial check.
 // Local storage profile/session values are intentionally not trusted for paid
 // access because users can edit them in the browser.
+// ── FREE FOR THE 2026 SEASON (owner + partner ruling 2026-08-17) ──
+// Every signed-in user gets the full paid experience through the end of the
+// 2026 season. The marketing page carries the same promise ("Free for the
+// 2026 season"). Expiry is deliberate: after ENDS the paywall resumes on its
+// own — revisit BEFORE then to extend, convert, or announce. To end early,
+// set active to false and redeploy.
+window.DHQ_FREE_SEASON = {
+  ENDS: Date.UTC(2027, 2, 1), // 2027-03-01 — past Super Bowl LXI
+  active() { return Date.now() < this.ENDS; },
+};
+
 function getTier() {
   if (isSandbox()) return 'paid';
+  if (window.DHQ_FREE_SEASON.active()) return 'paid';
   // Dev-only tier override for QA-ing the free/trial experience locally.
   // Gated to localhost so it can never bypass the paywall in production.
   const _host = window.location?.hostname;
