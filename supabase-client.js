@@ -1223,6 +1223,74 @@ function _normalizeDraftBoard(raw) {
     return out;
 }
 
+// ══════════════════════════════════════════════════════════════════
+// WAR ROOM BIG BOARD CLOUD VAULT (owner directive 2026-08-17: "never lose
+// it once you build it" — board hand-lost twice to device storage).
+//
+// Stores the wr_bigboard snapshot (myOrder / tags / notes / tiers — hours of
+// hand work) in draft_boards under league_id "<leagueId>::wr_bigboard". The
+// suffix gives the vault its own row: OD.loadDraftBoard's Scout reader
+// selects eq(league_id, <leagueId>) exactly, so it never sees vault rows and
+// its normalization contract stays untouched.
+//
+// Read-modify-write instead of upsert: the table's unique arbiter differs by
+// principal type (legacy username vs account user_id), and a wrong arbiter
+// fails silently. Selecting the owner's row first works for both.
+// This is a BACKUP, not two-way sync: local edits always win; the vault is
+// read only when the local copy is gone.
+// ══════════════════════════════════════════════════════════════════
+
+const WR_BIGBOARD_VAULT_SUFFIX = '::wr_bigboard';
+
+window.OD.saveBigBoardBackup = async function(leagueId, board) {
+    if (!leagueId || !board || typeof board !== 'object') return false;
+    const owner = getOwnerIdentity();
+    const db = getClient();
+    if (!db || !isConfigured() || !hasOwnerIdentity()) return false;
+    const rowLeagueId = String(leagueId) + WR_BIGBOARD_VAULT_SUFFIX;
+    const payload = { schema: 'wr_bigboard_v1', savedAt: new Date().toISOString(), board };
+    try {
+        await ensureUser(owner.username);
+        const { data: existing, error: selErr } = await applyOwnerFilter(
+            db.from('draft_boards').select('id'), owner
+        ).eq('league_id', rowLeagueId).maybeSingle();
+        if (selErr) throw selErr;
+        if (existing?.id) {
+            const { error } = await db.from('draft_boards')
+                .update({ board: payload, updated_at: new Date().toISOString() })
+                .eq('id', existing.id);
+            if (error) throw error;
+        } else {
+            const { error } = await db.from('draft_boards')
+                .insert({ ...ownerCols(owner), league_id: rowLeagueId, board: payload });
+            if (error) throw error;
+        }
+        return true;
+    } catch (e) {
+        if (window.wrLog) window.wrLog('bigBoardVault.save', e);
+        return false;
+    }
+};
+
+window.OD.loadBigBoardBackup = async function(leagueId) {
+    if (!leagueId) return null;
+    const owner = getOwnerIdentity();
+    const db = getClient();
+    if (!db || !isConfigured() || !hasOwnerIdentity()) return null;
+    try {
+        const { data, error } = await applyOwnerFilter(
+            db.from('draft_boards').select('board, updated_at'), owner
+        ).eq('league_id', String(leagueId) + WR_BIGBOARD_VAULT_SUFFIX).maybeSingle();
+        if (error || !data?.board) return null;
+        const payload = data.board;
+        if (payload?.schema !== 'wr_bigboard_v1' || !payload.board) return null;
+        return { board: payload.board, updatedAt: data.updated_at || payload.savedAt || null };
+    } catch (e) {
+        if (window.wrLog) window.wrLog('bigBoardVault.load', e);
+        return null;
+    }
+};
+
 window.OD.loadDraftBoard = async function(leagueId) {
     // localStorage first (instant)
     let local = {};
