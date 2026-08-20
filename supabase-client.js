@@ -1267,15 +1267,32 @@ window.OD.saveBigBoardBackup = async function(leagueId, board) {
     const payload = { schema: 'wr_bigboard_v1', savedAt: new Date().toISOString(), board };
     try {
         await ensureUser(owner.username);
-        const { data: existing, error: selErr } = await applyDraftBoardOwner(
-            db.from('draft_boards').select('id'), owner
-        ).eq('league_id', rowLeagueId).maybeSingle();
+        // Nothing constrains (owner, league_id) unique on this table, and TWO
+        // paths save on a single edit — the draft room's own save effect and
+        // this module's debounced push. On 2026-08-20 they raced, both saw no
+        // row, and both inserted; from then on every maybeSingle() failed with
+        // PGRST116 ("Results contain 2 rows") and the vault was broken again.
+        // Never assume exactly one row: take the newest and collapse the rest.
+        const { data: rows, error: selErr } = await applyDraftBoardOwner(
+            db.from('draft_boards').select('id, updated_at'), owner
+        ).eq('league_id', rowLeagueId).order('updated_at', { ascending: false });
         if (selErr) throw selErr;
-        if (existing?.id) {
+        const keep = rows && rows.length ? rows[0] : null;
+        if (keep?.id) {
             const { error } = await db.from('draft_boards')
                 .update({ [DRAFT_BOARDS_JSON_COL]: payload, updated_at: new Date().toISOString() })
-                .eq('id', existing.id);
+                .eq('id', keep.id);
             if (error) throw error;
+            // Self-heal: drop the duplicate backups this race already created,
+            // keeping the row we just wrote. Owner-filtered, so it can only
+            // ever touch this user's own vault rows.
+            if (rows.length > 1) {
+                const extras = rows.slice(1).map(r => r.id).filter(Boolean);
+                const { error: delErr } = await applyDraftBoardOwner(
+                    db.from('draft_boards').delete(), owner
+                ).eq('league_id', rowLeagueId).in('id', extras);
+                if (delErr && window.wrLog) window.wrLog('bigBoardVault.dedupe', delErr);
+            }
         } else {
             const { error } = await db.from('draft_boards').insert({
                 ...draftBoardOwnerCols(owner),
@@ -1298,9 +1315,12 @@ window.OD.loadBigBoardBackup = async function(leagueId) {
     const db = getClient();
     if (!db || !isConfigured() || !hasOwnerIdentity()) return null;
     try {
-        const { data, error } = await applyDraftBoardOwner(
+        // Newest row wins; duplicates must not make the read throw (PGRST116).
+        const { data: rows, error } = await applyDraftBoardOwner(
             db.from('draft_boards').select(DRAFT_BOARDS_JSON_COL + ', updated_at'), owner
-        ).eq('league_id', String(leagueId) + WR_BIGBOARD_VAULT_SUFFIX).maybeSingle();
+        ).eq('league_id', String(leagueId) + WR_BIGBOARD_VAULT_SUFFIX)
+            .order('updated_at', { ascending: false }).limit(1);
+        const data = rows && rows.length ? rows[0] : null;
         if (error || !data?.[DRAFT_BOARDS_JSON_COL]) return null;
         const payload = data[DRAFT_BOARDS_JSON_COL];
         if (payload?.schema !== 'wr_bigboard_v1' || !payload.board) return null;
