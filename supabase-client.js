@@ -1242,6 +1242,22 @@ function _normalizeDraftBoard(raw) {
 
 const WR_BIGBOARD_VAULT_SUFFIX = '::wr_bigboard';
 
+// draft_boards does NOT match this file's usual column conventions, and the
+// mismatch made the vault a no-op from the day it shipped: it keeps its JSON
+// in `picks` (there is no `board` column) and names the legacy principal
+// column `sleeper_username` (every other table uses `username`). Every save
+// bounced with PGRST204 — 83 silent failures in one day on the owner's
+// Mission Control (2026-08-19) — so when his board was lost, the backup he
+// was promised had never once been written. Helpers below keep this table's
+// naming quirks in one place.
+const DRAFT_BOARDS_JSON_COL = 'picks';
+function draftBoardOwnerCols(owner) {
+    return owner.userId ? { user_id: owner.userId } : { sleeper_username: owner.username };
+}
+function applyDraftBoardOwner(query, owner) {
+    return owner.userId ? query.eq('user_id', owner.userId) : query.eq('sleeper_username', owner.username);
+}
+
 window.OD.saveBigBoardBackup = async function(leagueId, board) {
     if (!leagueId || !board || typeof board !== 'object') return false;
     const owner = getOwnerIdentity();
@@ -1251,18 +1267,22 @@ window.OD.saveBigBoardBackup = async function(leagueId, board) {
     const payload = { schema: 'wr_bigboard_v1', savedAt: new Date().toISOString(), board };
     try {
         await ensureUser(owner.username);
-        const { data: existing, error: selErr } = await applyOwnerFilter(
+        const { data: existing, error: selErr } = await applyDraftBoardOwner(
             db.from('draft_boards').select('id'), owner
         ).eq('league_id', rowLeagueId).maybeSingle();
         if (selErr) throw selErr;
         if (existing?.id) {
             const { error } = await db.from('draft_boards')
-                .update({ board: payload, updated_at: new Date().toISOString() })
+                .update({ [DRAFT_BOARDS_JSON_COL]: payload, updated_at: new Date().toISOString() })
                 .eq('id', existing.id);
             if (error) throw error;
         } else {
-            const { error } = await db.from('draft_boards')
-                .insert({ ...ownerCols(owner), league_id: rowLeagueId, board: payload });
+            const { error } = await db.from('draft_boards').insert({
+                ...draftBoardOwnerCols(owner),
+                league_id: rowLeagueId,
+                board_name: 'wr_bigboard',
+                [DRAFT_BOARDS_JSON_COL]: payload,
+            });
             if (error) throw error;
         }
         return true;
@@ -1278,11 +1298,11 @@ window.OD.loadBigBoardBackup = async function(leagueId) {
     const db = getClient();
     if (!db || !isConfigured() || !hasOwnerIdentity()) return null;
     try {
-        const { data, error } = await applyOwnerFilter(
-            db.from('draft_boards').select('board, updated_at'), owner
+        const { data, error } = await applyDraftBoardOwner(
+            db.from('draft_boards').select(DRAFT_BOARDS_JSON_COL + ', updated_at'), owner
         ).eq('league_id', String(leagueId) + WR_BIGBOARD_VAULT_SUFFIX).maybeSingle();
-        if (error || !data?.board) return null;
-        const payload = data.board;
+        if (error || !data?.[DRAFT_BOARDS_JSON_COL]) return null;
+        const payload = data[DRAFT_BOARDS_JSON_COL];
         if (payload?.schema !== 'wr_bigboard_v1' || !payload.board) return null;
         return { board: payload.board, updatedAt: data.updated_at || payload.savedAt || null };
     } catch (e) {
