@@ -65,6 +65,47 @@ const STORAGE_KEYS = {
   FEATURE_USAGE:           feat => `dhq_feat_usage_${feat}`,       // Per-feature trial usage count
 };
 
+// ── Storage janitor (owner ruling 2026-08-27) ────────────────────
+// A device whose localStorage fills up fails EVERY later save (14
+// QuotaExceededError rows from one device that morning). The heavyweight
+// is dhq_hist_<lid> — a league's full multi-season history, several
+// hundred KB per league and fully rebuildable from Sleeper. On a quota
+// error, evict only the rebuildable caches below, then retry the write
+// once. Never touches auth, prefs, boards, strategies, or custom events.
+const PURGEABLE_CACHE_PREFIXES = [
+  'dhq_hist_',           // per-league history cache (the whale; refetched on demand)
+  'wr_compare_h2h_v3_',  // compare tab H2H meetings cache
+  'wr_adp_market_v2_',   // ADP market cache (18h TTL)
+  'fw_stats_',           // legacy season-stats blobs (superseded by IndexedDB)
+];
+let _janitorLastRun = 0;
+function isQuotaError(e) {
+  return !!e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014
+    || /quota/i.test(String(e.message || '')));
+}
+function storageJanitor(trigger) {
+  const now = Date.now();
+  if (now - _janitorLastRun < 60000) return 0; // never thrash
+  _janitorLastRun = now;
+  let removed = 0, freedChars = 0;
+  try {
+    Object.keys(localStorage).forEach(k => {
+      if (PURGEABLE_CACHE_PREFIXES.some(p => k.indexOf(p) === 0)) {
+        try {
+          freedChars += (localStorage.getItem(k) || '').length;
+          localStorage.removeItem(k);
+          removed++;
+        } catch (e) { /* keep sweeping */ }
+      }
+    });
+  } catch (e) { /* storage unreadable — nothing to free */ }
+  // One incident-table row per sweep so Mission Control shows the rescue
+  // working; the 60s throttle above caps the volume.
+  _log('storage.janitor', { removed, freedChars, trigger: trigger || 'quota' });
+  return removed;
+}
+window.DhqStorageJanitor = { run: storageJanitor, isQuotaError };
+
 // ── DhqStorage — typed wrapper with error handling ───────────────
 // Centralizes JSON parsing, quota-exceeded handling, and error logging.
 // All methods are synchronous and safe to call in any context.
@@ -92,11 +133,16 @@ const DhqStorage = {
   },
 
   // Set a JSON-serialized value. Returns true on success, false on quota error.
+  // A quota failure runs the janitor and retries once before giving up.
   set(key, value) {
+    const payload = JSON.stringify(value);
     try {
-      localStorage.setItem(key, JSON.stringify(value));
+      localStorage.setItem(key, payload);
       return true;
     } catch (e) {
+      if (isQuotaError(e) && storageJanitor('quota:set')) {
+        try { localStorage.setItem(key, payload); return true; } catch (e2) { _log('storage.set', e2, { key }); return false; }
+      }
       _log('storage.set', e, { key });
       return false;
     }
@@ -108,6 +154,9 @@ const DhqStorage = {
       localStorage.setItem(key, value);
       return true;
     } catch (e) {
+      if (isQuotaError(e) && storageJanitor('quota:setStr')) {
+        try { localStorage.setItem(key, value); return true; } catch (e2) { _log('storage.setStr', e2, { key }); return false; }
+      }
       _log('storage.setStr', e, { key });
       return false;
     }
