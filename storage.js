@@ -78,6 +78,14 @@ const PURGEABLE_CACHE_PREFIXES = [
   'wr_adp_market_v2_',   // ADP market cache (18h TTL)
   'fw_stats_',           // legacy season-stats blobs (superseded by IndexedDB)
 ];
+// Orphaned draft recaps (2026-08-28 deep dive): every saved recap also wrote a
+// wr_draft_recap_<timestamp> copy that NOTHING reads — the real record lives in
+// wr_draft_recap_archive_<lid> (capped at 25, read by post-draft). The writer
+// is fixed, but devices carry years of these; the digit-only suffix keeps the
+// archive keys untouchable by construction.
+const PURGEABLE_KEY_PATTERNS = [
+  /^wr_draft_recap_\d+$/,
+];
 let _janitorLastRun = 0;
 function isQuotaError(e) {
   return !!e && (e.name === 'QuotaExceededError' || e.code === 22 || e.code === 1014
@@ -90,7 +98,7 @@ function storageJanitor(trigger) {
   let removed = 0, freedChars = 0;
   try {
     Object.keys(localStorage).forEach(k => {
-      if (PURGEABLE_CACHE_PREFIXES.some(p => k.indexOf(p) === 0)) {
+      if (PURGEABLE_CACHE_PREFIXES.some(p => k.indexOf(p) === 0) || PURGEABLE_KEY_PATTERNS.some(rx => rx.test(k))) {
         try {
           freedChars += (localStorage.getItem(k) || '').length;
           localStorage.removeItem(k);
