@@ -108,8 +108,10 @@ function storageJanitor(trigger) {
     });
   } catch (e) { /* storage unreadable — nothing to free */ }
   // One incident-table row per sweep so Mission Control shows the rescue
-  // working; the 60s throttle above caps the volume.
-  _log('storage.janitor', { removed, freedChars, trigger: trigger || 'quota' });
+  // working; the 60s throttle above caps the volume. A plain sentence, not
+  // an object — objects stringify to "[object Object]" and render as a
+  // blank "—" row in the admin error table (owner report 2026-08-29).
+  _log('storage.janitor', 'cleaned ' + removed + ' items, freed ~' + Math.round(freedChars / 1024) + 'KB (' + (trigger || 'quota') + ')');
   return removed;
 }
 window.DhqStorageJanitor = { run: storageJanitor, isQuotaError };
@@ -125,7 +127,7 @@ const DhqStorage = {
       if (raw === null) return fallback;
       return JSON.parse(raw);
     } catch (e) {
-      _log('storage.get', e, { key });
+      _log('storage.get:' + key, e);
       return fallback;
     }
   },
@@ -135,7 +137,7 @@ const DhqStorage = {
     try {
       return localStorage.getItem(key) ?? fallback;
     } catch (e) {
-      _log('storage.getStr', e, { key });
+      _log('storage.getStr:' + key, e);
       return fallback;
     }
   },
@@ -149,9 +151,9 @@ const DhqStorage = {
       return true;
     } catch (e) {
       if (isQuotaError(e) && storageJanitor('quota:set')) {
-        try { localStorage.setItem(key, payload); return true; } catch (e2) { _log('storage.set', e2, { key }); return false; }
+        try { localStorage.setItem(key, payload); return true; } catch (e2) { _log('storage.set:' + key, e2); return false; }
       }
-      _log('storage.set', e, { key });
+      _log('storage.set:' + key, e);
       return false;
     }
   },
@@ -163,9 +165,9 @@ const DhqStorage = {
       return true;
     } catch (e) {
       if (isQuotaError(e) && storageJanitor('quota:setStr')) {
-        try { localStorage.setItem(key, value); return true; } catch (e2) { _log('storage.setStr', e2, { key }); return false; }
+        try { localStorage.setItem(key, value); return true; } catch (e2) { _log('storage.setStr:' + key, e2); return false; }
       }
-      _log('storage.setStr', e, { key });
+      _log('storage.setStr:' + key, e);
       return false;
     }
   },
@@ -175,7 +177,7 @@ const DhqStorage = {
     try {
       localStorage.removeItem(key);
     } catch (e) {
-      _log('storage.remove', e, { key });
+      _log('storage.remove:' + key, e);
     }
   },
 
