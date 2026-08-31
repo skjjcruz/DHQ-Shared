@@ -877,6 +877,14 @@ window.App = window.App || {};
       posSurplus = posCount - Math.max(1, Math.round(slotsNeeded));
     }
 
+    // IDP reality check (owner report 2026-08-31): tackling production does
+    // not die on an age curve. A defender STARTING for his NFL club (depth
+    // chart #1) never draws an age-based Sell — 31-year-old every-down LBs
+    // (Oluokun, E. Wilson) were reading 'Past value window' while literally
+    // leading their teams in snaps.
+    const idpStarter = ['DL', 'LB', 'DB', 'EDGE'].includes(pos) &&
+      ((S.players && S.players[pid] && S.players[pid].depth_chart_order) === 1);
+
     // Base verdict — the strategy-blind age/value/trend read (unchanged chain).
     function baseAction() {
       // Rookie stash
@@ -897,7 +905,8 @@ window.App = window.App || {};
       if (peakYrsLeft <= 0 && valueYrsLeft > 0 && trend <= -10) return { action: 'SELL_HIGH', label: 'Sell High', reason: 'Veteran decline band and production slipping', col: 'var(--amber)', bg: 'var(--amberL)' };
       if (peakYrsLeft <= 0 && valueYrsLeft > 0) return { action: 'HOLD', label: 'Hold', reason: valueYrsLeft + ' value year' + (valueYrsLeft > 1 ? 's' : '') + ' left in veteran band', col: 'var(--amber)', bg: 'var(--amberL)' };
 
-      // Past valuable window
+      // Past valuable window — unless he's an IDP starter producing right now.
+      if (idpStarter && valueYrsLeft <= 0) return { action: 'HOLD', label: 'Hold', reason: 'Starting for his NFL team — live production outruns the age curve', col: 'var(--accent)', bg: 'var(--accentL)' };
       if (valueYrsLeft <= 0 && trend <= -10) return { action: 'SELL', label: 'Sell', reason: 'Past value window and declining (' + trend + '%)', col: 'var(--red)', bg: 'var(--redL)' };
       if (valueYrsLeft <= 0) return { action: 'SELL', label: 'Sell', reason: 'Past value window — trade while value remains', col: 'var(--red)', bg: 'var(--redL)' };
 
