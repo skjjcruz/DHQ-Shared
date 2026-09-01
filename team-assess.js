@@ -51,8 +51,12 @@ window.App = window.App || {};
       else if (slot === 'REC_FLEX') { slots.WR = (slots.WR||0)+0.5; slots.TE = (slots.TE||0)+0.5; }
     });
     Object.entries(slots).forEach(([pos, count]) => {
-      const rounded = Math.max(1, Math.round(count));
-      msq[pos] = Math.max(rounded, Math.ceil(rounded * 1.3));
+      // The bar is the WEEKLY STARTING REQUIREMENT (hard slots + flex share),
+      // not an inflated hoarding target. The old 1.3× multiplier demanded
+      // e.g. 6 quality DLs in a 3-DL+IDP-flex league, so a room led by three
+      // elite DLs still read "thin" (owner ruling 2026-09-01: quantity math
+      // wearing a quality costume).
+      msq[pos] = Math.max(1, Math.round(count));
     });
     return msq;
   }
@@ -370,9 +374,18 @@ window.App = window.App || {};
       const actual      = playerIds.length;
       const diff        = actual - ideal;
 
-      // NFL-starter count
+      // NFL-starter count. A player counts as startable quality by EITHER
+      // door: top-of-pool dynasty value, OR being an actual starter on the
+      // live ESPN depth chart (App.NflRoles, loaded on app open — fails soft
+      // to value-only when the feed isn't up). The value pool age-discounts
+      // productive vets (a 12th-year All-Pro can fall out of the top-64
+      // "quality" list while starting every week); the depth chart can't be
+      // argued with (owner ruling 2026-09-01).
       const posStarters   = nflStarterSet[pos] || new Set();
-      const nflStarterIds = playerIds.filter(id => posStarters.has(id));
+      const nflStarterIds = playerIds.filter(id => {
+        if (posStarters.has(id)) return true;
+        try { return !!window.App?.NflRoles?.starterRole?.(players[id]); } catch (e) { return false; }
+      });
       const nflStarters   = nflStarterIds.length;
       const minQuality    = MIN_STARTER_QUALITY[pos] || startingReq;
 
@@ -397,6 +410,18 @@ window.App = window.App || {};
       // Depth override
       if ((status === 'ok' || status === 'surplus') && actual < ideal) {
         status = 'thin';
+      }
+
+      // Elite-concentration guard: a position whose projected starter points
+      // beat the league median at that position is never a weakness, no
+      // matter how the counting shook out — three monsters filling three
+      // slots outscore six bodies (owner ruling 2026-09-01). Medians arrive
+      // via dynamicConfig from assessAllTeams; preseason with no stats yet
+      // leaves them 0 and this guard inert.
+      const _medians = _cfg.posMedianPts || null;
+      if ((status === 'thin' || status === 'deficit') && _medians
+          && _medians[pos] > 0 && projectedPts >= _medians[pos]) {
+        status = 'ok';
       }
 
       // Sort display order by dynasty value
@@ -550,6 +575,33 @@ window.App = window.App || {};
       weeklyTarget: WEEKLY_TARGET_DYN,
     };
 
+    // League median of projected starter points per position — feeds the
+    // elite-concentration guard in assessTeam. Every roster contributes
+    // (zero if it holds nobody at the position) so the median reflects the
+    // whole league, computed with the same top-N-starters formula assessTeam
+    // uses for projectedPts.
+    const _msq = dynamicConfig.minStarterQuality;
+    const _perPos = {};
+    (rosters || []).forEach(r => {
+      const groups = {};
+      (r.players || []).forEach(pid => {
+        const np = playerPos(pid, players);
+        if (!np || !_msq[np]) return;
+        (groups[np] = groups[np] || []).push(playerStats?.[pid]?.seasonAvg || playerStats?.[pid]?.prevAvg || 0);
+      });
+      Object.keys(_msq).forEach(pos => {
+        const arr = (groups[pos] || []).sort((a, b) => b - a);
+        const pts = arr.slice(0, _msq[pos] || 1).reduce((s, v) => s + v, 0);
+        (_perPos[pos] = _perPos[pos] || []).push(pts);
+      });
+    });
+    const posMedianPts = {};
+    Object.entries(_perPos).forEach(([pos, arr]) => {
+      arr.sort((a, b) => a - b);
+      posMedianPts[pos] = arr[Math.floor(arr.length / 2)] || 0;
+    });
+    dynamicConfig.posMedianPts = posMedianPts;
+
     const assessments = (rosters || []).map(r => {
       const ownerPicks = picksByOwner[r.roster_id] || [];
       return assessTeam(r, players, playerStats, leagueInfo, leagueUsers, nflStarterSet, ownerPicks, rosters, dynamicConfig);
@@ -634,7 +686,10 @@ window.App = window.App || {};
   // roster's players + record + week). On later loads/refreshes we serve that
   // pinned snapshot immediately and never recompute until the league state
   // actually changes — so the numbers stay identical unless something real moved.
-  var _PIN_PREFIX = 'dhq_power_pin_v2:';
+  // v3 (2026-09-01): positional-weakness logic changed (starting-requirement
+  // bar, ESPN depth-chart quality door, elite-concentration guard) — old v2
+  // pins would keep serving stale needs/health until the roster changed.
+  var _PIN_PREFIX = 'dhq_power_pin_v3:';
 
   function _rosterFingerprint() {
     var S = window.S || window.App?.S || {};
