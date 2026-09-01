@@ -674,7 +674,11 @@ window.App = window.App || {};
     // partial-data pass otherwise served a wrong tier until rosters changed.
     const scoreCount = Object.keys(LI.playerScores || {}).length;
     const statCount = Object.keys(S.playerStats || {}).length;
-    return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|sc' + scoreCount + '|st' + statCount + '|tp' + ((S.tradedPicks || []).length) + '|' + fp;
+    // ESPN roles are a quality-door input since 2026-09-01 — the count joins
+    // the signature so an assessment computed before the depth charts landed
+    // recomputes when they do, instead of serving vet-blind verdicts all day.
+    const roleCount = (window.App?.NflRoles?.count?.() || 0);
+    return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|sc' + scoreCount + '|st' + statCount + '|r' + roleCount + '|tp' + ((S.tradedPicks || []).length) + '|' + fp;
   }
 
   // ── Stability pin ────────────────────────────────────────────────
@@ -687,9 +691,11 @@ window.App = window.App || {};
   // pinned snapshot immediately and never recompute until the league state
   // actually changes — so the numbers stay identical unless something real moved.
   // v3 (2026-09-01): positional-weakness logic changed (starting-requirement
-  // bar, ESPN depth-chart quality door, elite-concentration guard) — old v2
-  // pins would keep serving stale needs/health until the roster changed.
-  var _PIN_PREFIX = 'dhq_power_pin_v3:';
+  // bar, ESPN depth-chart quality door, elite-concentration guard).
+  // v4 (2026-09-01, same day): v3 could pin BEFORE the ESPN roles feed
+  // landed, freezing vet-blind verdicts; _dataReady now waits for the feed
+  // to settle, and the bump discards any vet-blind v3 pins already saved.
+  var _PIN_PREFIX = 'dhq_power_pin_v4:';
 
   function _rosterFingerprint() {
     var S = window.S || window.App?.S || {};
@@ -723,7 +729,12 @@ window.App = window.App || {};
       var liReady = !!(window.App && window.App.LI_LOADED) || !!LI.builtAt;
       var scoresReady = Object.keys(LI.playerScores || {}).length > 0;
       var statsReady = Object.keys(S.playerStats || {}).length > 0;
-      return liReady && scoresReady && statsReady;
+      // Never pin before the ESPN roles fetch has finished one way or the
+      // other — pinning a roles-less pass froze 'LB is weak' verdicts on
+      // rosters full of live NFL starters (owner report 2026-09-01). A feed
+      // that failed still settles, so a network miss can't block pinning.
+      var rolesSettled = !window.App?.NflRoles?.settled || window.App.NflRoles.settled();
+      return liReady && scoresReady && statsReady && rolesSettled;
     } catch (e) { return false; }
   }
 

@@ -27,6 +27,8 @@
 
   let _roles = null;    // { 'TEAM|norm name': { pos, rank } }
   let _loading = null;
+  let _settled = false; // load finished (with data OR failed) — consumers that
+                        // must not freeze half-loaded verdicts wait on this.
 
   function normName(name) {
     return String(name || '')
@@ -64,6 +66,7 @@
     const cached = readCache();
     if (cached) {
       _roles = cached;
+      _settled = true;
       try { root.dispatchEvent(new Event('wr:roles-loaded')); } catch (e) {}
       return Promise.resolve(_roles);
     }
@@ -79,7 +82,7 @@
         return _roles;
       })
       .catch(() => null)
-      .finally(() => { _loading = null; });
+      .finally(() => { _loading = null; _settled = true; });
     return _loading;
   }
 
@@ -109,7 +112,11 @@
     return r.pos + r.rank;
   }
 
-  App.NflRoles = { load, roleFor, starterRole, _normName: normName };
+  App.NflRoles = {
+    load, roleFor, starterRole, _normName: normName,
+    settled: () => _settled,
+    count: () => (_roles ? Object.keys(_roles).length : 0),
+  };
   // Check the depth charts on every app open (owner rule 2026-08-31).
   try { load(); } catch (e) { /* soft */ }
 })(typeof window !== 'undefined' ? window : globalThis);

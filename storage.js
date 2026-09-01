@@ -79,6 +79,7 @@ const PURGEABLE_CACHE_PREFIXES = [
   'fw_stats_',           // legacy season-stats blobs (superseded by IndexedDB)
   'dhq_nfl_roles_',      // ESPN depth-chart snapshot (refetched every app open)
   'dhq_power_pin_v2:',   // orphaned pre-v3 assessment pins (superseded 2026-09-01)
+  'dhq_power_pin_v3:',   // orphaned v3 pins — could hold vet-blind verdicts (same day)
 ];
 // Orphaned draft recaps (2026-08-28 deep dive): every saved recap also wrote a
 // wr_draft_recap_<timestamp> copy that NOTHING reads — the real record lives in
