@@ -1797,7 +1797,11 @@ function saveAnalyticsQueue(queue) {
 function safeAnalyticsMeta(meta) {
     const out = {};
     Object.entries(meta || {}).forEach(([key, value]) => {
-        if (/prompt|message|body|text|doc|content/i.test(key)) return;
+        // 'context' is our own code-location label (e.g. 'storage.set:wr_sos_wk_…'),
+        // never user content — and the name filter below was eating it, because
+        // 'conTEXT' matches /text/i. That blinded the admin error table to WHERE
+        // errors happen (owner deep dive 2026-09-01), so it's exempt by name.
+        if (key !== 'context' && /prompt|message|body|text|doc|content/i.test(key)) return;
         if (value == null) return;
         if (['string', 'number', 'boolean'].includes(typeof value)) out[key] = value;
         else if (Array.isArray(value)) out[key] = value.slice(0, 10).map(v => ['string', 'number', 'boolean'].includes(typeof v) ? v : String(v).slice(0, 80));

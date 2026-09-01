@@ -108,11 +108,13 @@ function storageJanitor(trigger) {
       }
     });
   } catch (e) { /* storage unreadable — nothing to free */ }
-  // One incident-table row per sweep so Mission Control shows the rescue
-  // working; the 60s throttle above caps the volume. A plain sentence, not
-  // an object — objects stringify to "[object Object]" and render as a
-  // blank "—" row in the admin error table (owner report 2026-08-29).
-  _log('storage.janitor', 'cleaned ' + removed + ' items, freed ~' + Math.round(freedChars / 1024) + 'KB (' + (trigger || 'quota') + ')');
+  // The sweep report is GOOD news — routing it through dhqLog filed it in
+  // the admin error table as "Error: cleaned 3 items…" and inflated the
+  // client-error count (owner ruling 2026-09-01). Console + Sentry info
+  // only now; a retry that still fails logs its own storage.set error row.
+  const sweepReport = 'cleaned ' + removed + ' items, freed ~' + Math.round(freedChars / 1024) + 'KB (' + (trigger || 'quota') + ')';
+  try { console.info('[DHQ:storage.janitor]', sweepReport); } catch (e) { /* console gone — nothing to do */ }
+  window.DHQBugCapture?.captureMessage?.(sweepReport, 'info', { source: 'storage.janitor' });
   return removed;
 }
 window.DhqStorageJanitor = { run: storageJanitor, isQuotaError };
