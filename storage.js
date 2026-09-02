@@ -80,6 +80,9 @@ const PURGEABLE_CACHE_PREFIXES = [
   'dhq_nfl_roles_',      // ESPN depth-chart snapshot (refetched every app open)
   'dhq_power_pin_v2:',   // orphaned pre-v3 assessment pins (superseded 2026-09-01)
   'dhq_power_pin_v3:',   // orphaned v3 pins — could hold vet-blind verdicts (same day)
+  'dhq_leagueintel_',    // league-intel build — rebuildable, and it now lives in
+                         // IndexedDB anyway (2026-09-02); stray localStorage
+                         // copies were the #1 quota killer (5 people in one day)
 ];
 // Orphaned draft recaps (2026-08-28 deep dive): every saved recap also wrote a
 // wr_draft_recap_<timestamp> copy that NOTHING reads — the real record lives in
@@ -220,6 +223,59 @@ const DhqStorage = {
   setTtl(key, value) {
     return DhqStorage.set(key, { _ts: Date.now(), _data: value });
   },
+};
+
+// ── IndexedDB blob store (owner diet 2026-09-02) ─────────────────
+// localStorage's ~5MB allowance cannot hold the league-intel build —
+// storage.set:dhq_leagueintel_v14 was the #1 quota error once error rows
+// started naming their keys. Multi-hundred-KB rebuildable blobs live here
+// instead (same medicine as sleeper-api.js's season-stats cache). Every
+// failure resolves to null/false so callers can fall back gracefully.
+const IDB_NAME = 'dhq_blob_store';
+const IDB_STORE = 'blobs';
+function _idbOpen() {
+  return new Promise((resolve, reject) => {
+    try {
+      if (typeof window.indexedDB === 'undefined') return reject(new Error('indexedDB unavailable'));
+      const req = window.indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = () => { try { req.result.createObjectStore(IDB_STORE); } catch (e) { /* exists */ } };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
+    } catch (e) { reject(e); }
+  });
+}
+DhqStorage.idbGet = async function (key) {
+  try {
+    const db = await _idbOpen();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readonly');
+      const rq = tx.objectStore(IDB_STORE).get(key);
+      rq.onsuccess = () => resolve(rq.result ?? null);
+      rq.onerror = () => resolve(null);
+    });
+  } catch (e) { return null; }
+};
+DhqStorage.idbSet = async function (key, value) {
+  try {
+    const db = await _idbOpen();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).put(value, key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = tx.onabort = () => resolve(false);
+    });
+  } catch (e) { return false; }
+};
+DhqStorage.idbRemove = async function (key) {
+  try {
+    const db = await _idbOpen();
+    return await new Promise((resolve) => {
+      const tx = db.transaction(IDB_STORE, 'readwrite');
+      tx.objectStore(IDB_STORE).delete(key);
+      tx.oncomplete = () => resolve(true);
+      tx.onerror = tx.onabort = () => resolve(false);
+    });
+  } catch (e) { return false; }
 };
 
 window.App.STORAGE_KEYS = STORAGE_KEYS;

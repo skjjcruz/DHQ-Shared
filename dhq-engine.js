@@ -603,8 +603,15 @@ function _dhqStatusAdjustment({p,pos,age,peakEnd,declineEnd,seasons,curSeason,la
   return{mult:1,cap:null,code:'active',reason:''};
 }
 
-function loadLICache(){
-  const d=DhqStorage.get(LI_CACHE_KEY,null);
+// The intel build lives in IndexedDB as of 2026-09-02 — at full size it
+// simply doesn't fit localStorage's ~5MB allowance (storage.set:
+// dhq_leagueintel_v14 was the #1 quota error, 5 people in one day).
+// A legacy localStorage copy is still honored once for migration, then
+// freed; if IndexedDB is unavailable the old localStorage path remains.
+async function loadLICache(){
+  let d=null;
+  if(DhqStorage.idbGet){try{d=await DhqStorage.idbGet(LI_CACHE_KEY);}catch(e){d=null;}}
+  if(!d)d=DhqStorage.get(LI_CACHE_KEY,null);
   if(!d)return false;
   if(Date.now()-d.ts>_liTtl())return false;
   const S=window.App.S||window.S;
@@ -621,7 +628,12 @@ function saveLICache(){
   // Strip non-serializable functions before caching
   const cacheable={...LI};
   delete cacheable.dhqPickValueFn;
-  DhqStorage.set(LI_CACHE_KEY,{ts:Date.now(),leagueId:S.currentLeagueId,data:cacheable});
+  const payload={ts:Date.now(),leagueId:S.currentLeagueId,data:cacheable};
+  const idb=DhqStorage.idbSet?DhqStorage.idbSet(LI_CACHE_KEY,payload):Promise.resolve(false);
+  idb.then(ok=>{
+    if(ok){DhqStorage.remove(LI_CACHE_KEY);} // free the old quota-killing copy
+    else{DhqStorage.set(LI_CACHE_KEY,payload);} // no IndexedDB — old behavior
+  }).catch(()=>{DhqStorage.set(LI_CACHE_KEY,payload);});
 }
 
 // Get LeagueIntel value for a player (replaces dynastyValue for IDP)
@@ -664,7 +676,7 @@ async function loadLeagueIntel(){
   const sfStats=window.Sleeper?.fetchSeasonStats||(yr=>sf('/stats/nfl/regular/'+yr).catch(()=>({})));
   const SLEEPER=window.App.SLEEPER||window.SLEEPER||'https://api.sleeper.app/v1';
   try{
-  if(loadLICache()){window._liLoading=false;return;}
+  if(await loadLICache()){window._liLoading=false;return;}
   if(!S.currentLeagueId){window._liLoading=false;return;}
 
   const league=S.leagues.find(l=>l.league_id===S.currentLeagueId);
