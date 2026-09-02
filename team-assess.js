@@ -705,12 +705,16 @@ window.App = window.App || {};
   // roster's players + record + week). On later loads/refreshes we serve that
   // pinned snapshot immediately and never recompute until the league state
   // actually changes — so the numbers stay identical unless something real moved.
-  // v3 (2026-09-01): positional-weakness logic changed (starting-requirement
-  // bar, ESPN depth-chart quality door, elite-concentration guard).
-  // v4 (2026-09-01, same day): v3 could pin BEFORE the ESPN roles feed
-  // landed, freezing vet-blind verdicts; _dataReady now waits for the feed
-  // to settle, and the bump discards any vet-blind v3 pins already saved.
-  var _PIN_PREFIX = 'dhq_power_pin_v4:';
+  // PIN_ENGINE_REV — bump this on ANY change to verdict/needs/strengths/
+  // grading logic. The daily stability pin (local AND cloud) freezes a full
+  // assessment; without a bump, every device keeps serving YESTERDAY'S
+  // RULES until the day rolls over (owner report 2026-09-02: the Action
+  // Plan said 'QB depth gives you trade leverage' hours after the strengths
+  // rule was fixed, because the 8 AM pin predated the fix).
+  //   v3: weakness logic overhaul · v4: roles-feed race fix ·
+  //   v5: tradeable-excess strengths + engine-derived grades
+  var PIN_ENGINE_REV = 5;
+  var _PIN_PREFIX = 'dhq_power_pin_v' + PIN_ENGINE_REV + ':';
 
   function _rosterFingerprint() {
     var S = window.S || window.App?.S || {};
@@ -783,12 +787,14 @@ window.App = window.App || {};
       var S = window.S || window.App?.S || {};
       var lid = S.currentLeagueId || '_';
       var publish = function () {
-        try { window.OD?.saveLeagueDoc?.(lid, 'powerpin', { fp: fp, data: data }); }
+        try { window.OD?.saveLeagueDoc?.(lid, 'powerpin', { fp: fp, rev: PIN_ENGINE_REV, data: data }); }
         catch (e) { /* cloud unavailable — local pin still serves this device */ }
       };
       if (window.OD && window.OD.loadLeagueDoc) {
         window.OD.loadLeagueDoc(lid, 'powerpin').then(function (doc) {
-          if (doc && doc.fp === fp && Array.isArray(doc.data) && doc.data.length) {
+          // First-publisher-wins only among SAME-engine pins: a cloud pin from
+          // an older revision is yesterday's rules and must be overwritten.
+          if (doc && doc.rev === PIN_ENGINE_REV && doc.fp === fp && Array.isArray(doc.data) && doc.data.length) {
             if (JSON.stringify(doc.data) === JSON.stringify(data)) return; // already agree
             _writePinLocal(fp, doc.data);
             _assessCache = { sig: null, all: null, byId: null };
@@ -812,13 +818,16 @@ window.App = window.App || {};
       _pinCloudCheckedFp = fp;
       window.OD.loadLeagueDoc(lid, 'powerpin').then(function (doc) {
         var local = _loadPin(fp);
+        // A cloud pin computed by an older engine revision is stale advice
+        // wearing today's date — never adopt it (and republish ours over it).
+        if (doc && doc.rev !== PIN_ENGINE_REV) doc = null;
         if (!doc || doc.fp !== fp || !Array.isArray(doc.data) || !doc.data.length) {
           // Cloud has nothing for today's league state. If this device already
           // holds a pin (computed before the sync code arrived, or while the
           // cloud was unreachable), publish it — otherwise no surface ever
           // publishes today and every device keeps its own numbers until the
           // next day rolls the fingerprint (owner report 2026-08-14).
-          if (local) { try { window.OD.saveLeagueDoc(lid, 'powerpin', { fp: fp, data: local }); } catch (e3) {} }
+          if (local) { try { window.OD.saveLeagueDoc(lid, 'powerpin', { fp: fp, rev: PIN_ENGINE_REV, data: local }); } catch (e3) {} }
           return;
         }
         if (local && JSON.stringify(local) === JSON.stringify(doc.data)) return;
