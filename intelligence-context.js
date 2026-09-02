@@ -2058,11 +2058,21 @@
     };
   }
 
+  // Recommendations are league-scoped and perishable (audit 2026-09-02):
+  // the old store keyed on surface name only and never expired, so Alex
+  // could be grounded on a player card the user opened in ANOTHER league —
+  // labelled "treat as source of truth" — hours earlier.
+  const RECOMMENDATION_TTL_MS = 20 * 60 * 1000;
+  function _currentLeagueId() {
+    try { return String((window.S || window.App?.S || {}).currentLeagueId || ''); } catch (e) { return ''; }
+  }
   function publishRecommendations(scope, recommendations, options) {
     const key = String(scope || 'global');
     const ranked = rankRecommendations((recommendations || []).filter(Boolean));
     recommendationStore[key] = {
       scope: key,
+      leagueId: _currentLeagueId(),
+      publishedAt: Date.now(),
       updatedAt: new Date().toISOString(),
       recommendations: ranked,
       meta: options || {},
@@ -2071,9 +2081,20 @@
     return ranked;
   }
 
+  function _entryLive(entry) {
+    if (!entry) return false;
+    if (entry.publishedAt && Date.now() - entry.publishedAt > RECOMMENDATION_TTL_MS) return false;
+    const lid = _currentLeagueId();
+    if (entry.leagueId && lid && entry.leagueId !== lid) return false;
+    return true;
+  }
+
   function getRecommendations(scope) {
-    if (scope) return (recommendationStore[String(scope)]?.recommendations || []).slice();
-    return Object.values(recommendationStore).flatMap(entry => entry.recommendations || []);
+    if (scope) {
+      const entry = recommendationStore[String(scope)];
+      return _entryLive(entry) ? (entry.recommendations || []).slice() : [];
+    }
+    return Object.values(recommendationStore).filter(_entryLive).flatMap(entry => entry.recommendations || []);
   }
 
   function topRecommendations(options) {

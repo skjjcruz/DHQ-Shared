@@ -226,6 +226,12 @@ function dhqServerEnrichmentFields(){
     if (assess?.tier) out.teamTier = assess.tier;
     if (assess?.window) out.teamWindow = assess.window;
     if (typeof assess?.healthScore === 'number') out.healthScore = assess.healthScore;
+    // The GM plan travels on the generic path too (audit 2026-09-02) — the
+    // structured builder already sent it; this builder silently didn't.
+    try {
+      const fx = window.WR?.GmMode?.effects?.(S.currentLeagueId);
+      if (fx && fx.hasStrategy) out.gmStrategy = { mode: fx.mode || '', targetPositions: [...(fx.targetPositions || [])], sellPositions: [...(fx.sellPositions || [])] };
+    } catch (e) { /* gm-mode optional */ }
     return out;
   } catch (e) { return {}; }
 }

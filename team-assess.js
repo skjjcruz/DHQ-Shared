@@ -906,6 +906,34 @@ window.App = window.App || {};
   }
 
   // ─────────────────────────────────────────────────────────────
+  // Manual call resolver — the user's own verdict/tag for a player
+  // (roster-tab verdict store + shared player-tag store). Returns a
+  // full action object with manual:true, or null when the user hasn't
+  // weighed in. 'Watch' is a note, not a verdict — it never overrides.
+  // ─────────────────────────────────────────────────────────────
+  const _MANUAL_TAG_LABEL = { trade: 'Trade Block', cut: 'Cut', untouchable: 'Untouchable', watch: 'Watch' };
+  function manualCallFor(pid, S) {
+    try {
+      const lid = S && S.currentLeagueId;
+      let v = null;
+      if (lid && typeof localStorage !== 'undefined') {
+        const store = JSON.parse(localStorage.getItem('dhq_roster_verdict_v1:' + lid) || 'null');
+        v = (store && store[pid]) || null;
+      }
+      if (!v && typeof window !== 'undefined') v = _MANUAL_TAG_LABEL[(window._playerTags && window._playerTags[pid]) || ''] || null;
+      if (!v) return null;
+      const s = String(v);
+      if (/^watch$/i.test(s)) return null;
+      if (/^untouchable$/i.test(s)) return { action: 'HOLD', label: 'Untouchable', reason: 'Your call: untouchable — shielded from every sell flag', col: 'var(--green)', bg: 'var(--greenL)', manual: true };
+      if (/^(cut|drop)/i.test(s)) return { action: 'SELL', label: 'Cut', reason: 'Your call: cutting him loose', col: 'var(--red)', bg: 'var(--redL)', manual: true };
+      if (/trade/i.test(s)) return { action: 'SELL', label: 'Trade Block', reason: 'Your call: on the trade block', col: 'var(--amber)', bg: 'var(--amberL)', manual: true };
+      if (/^sell/i.test(s)) return { action: 'SELL', label: s, reason: 'Your call: selling', col: 'var(--red)', bg: 'var(--redL)', manual: true };
+      if (/^stash/i.test(s)) return { action: 'STASH', label: 'Stash', reason: 'Your call: stash and develop', col: 'var(--blue)', bg: 'var(--blueL)', manual: true };
+      return { action: 'HOLD', label: s, reason: 'Your call: ' + s.toLowerCase(), col: 'var(--accent)', bg: 'var(--accentL)', manual: true };
+    } catch (e) { return null; }
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // getPlayerAction — single source of truth for BUY/SELL/HOLD
   // ─────────────────────────────────────────────────────────────
 
@@ -1009,6 +1037,16 @@ window.App = window.App || {};
       return { action: 'SELL', label: 'Sell', reason: 'Past prime — move for future assets', col: 'var(--red)', bg: 'var(--redL)' };
     }
 
+    // ── Layer 0 — THE OWNER'S CALL (owner ruling 2026-09-02) ────────
+    // A manual verdict or player tag set on the roster tab outranks every
+    // layer below. Before this, tagging a player Untouchable moved four
+    // things on the roster tab and nothing else — the player card, modal,
+    // Compare, hover chip and Trade Finder all kept saying SELL.
+    if (isOwned) {
+      const manual = manualCallFor(pid, S);
+      if (manual) return manual;
+    }
+
     const base = baseAction();
 
     // ── GM Strategy layer ─────────────────────────────────────────
@@ -1107,6 +1145,7 @@ window.App = window.App || {};
 
   // Player action recommendation
   window.App.getPlayerAction = getPlayerAction;
+  window.App.manualCallFor = manualCallFor;
 
   // Also expose on window for direct access
   window.getPlayerAction              = getPlayerAction;
