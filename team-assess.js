@@ -712,8 +712,9 @@ window.App = window.App || {};
   // Plan said 'QB depth gives you trade leverage' hours after the strengths
   // rule was fixed, because the 8 AM pin predated the fix).
   //   v3: weakness logic overhaul · v4: roles-feed race fix ·
-  //   v5: tradeable-excess strengths + engine-derived grades
-  var PIN_ENGINE_REV = 5;
+  //   v5: tradeable-excess strengths + engine-derived grades ·
+  //   v6: superflex QB market alignment (values feed powerScore)
+  var PIN_ENGINE_REV = 6;
   var _PIN_PREFIX = 'dhq_power_pin_v' + PIN_ENGINE_REV + ':';
 
   function _rosterFingerprint() {

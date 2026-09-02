@@ -19,7 +19,7 @@ function _dhqIsSandbox(){
 // Builds IDP value from real scoring data + draft history + FAAB market
 // ══════════════════════════════════════════════════════════════════
 
-const LI_CACHE_KEY='dhq_leagueintel_v14';
+const LI_CACHE_KEY='dhq_leagueintel_v15'; // v15 (2026-09-02): superflex QB market alignment — cached v14 values predate it
 // LI staleness is season-aware: 8h is fine in the offseason (values drift
 // slowly), but during the regular season rosters/FAAB/trades move daily, so
 // the cache goes stale in 2h. Resolved at check time (not parse time) because

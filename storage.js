@@ -81,6 +81,7 @@ const PURGEABLE_CACHE_PREFIXES = [
   'dhq_power_pin_v2:',   // orphaned pre-v3 assessment pins (superseded 2026-09-01)
   'dhq_power_pin_v3:',   // orphaned v3 pins — could hold vet-blind verdicts (same day)
   'dhq_power_pin_v4:',   // orphaned v4 pins — pre-dated the tradeable-excess strengths rule
+  'dhq_power_pin_v5:',   // orphaned v5 pins — pre-dated the superflex QB alignment
   'dhq_leagueintel_',    // league-intel build — rebuildable, and it now lives in
                          // IndexedDB anyway (2026-09-02); stray localStorage
                          // copies were the #1 quota killer (5 people in one day)
