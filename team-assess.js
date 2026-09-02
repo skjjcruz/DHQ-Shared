@@ -58,6 +58,10 @@ window.App = window.App || {};
       // wearing a quality costume).
       msq[pos] = Math.max(1, Math.round(count));
     });
+    // Kicker floor of 2 (owner ruling 2026-09-02): one kicker is a bye-week
+    // trap — a roster carrying a single K reads as thin even though the
+    // lineup math says one slot. Applies only to leagues that roster kickers.
+    if (msq.K) msq.K = Math.max(msq.K, 2);
     return msq;
   }
 
