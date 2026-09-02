@@ -528,8 +528,19 @@ window.App = window.App || {};
       })
       .map(([pos, v]) => ({ pos, urgency: v.status }));
 
+    // A "strength" must mean TRADEABLE EXCESS, not adequacy: quality starters
+    // beyond the weekly requirement, sorted by how many spares you hold. The
+    // old rule listed any 'surplus' position unsorted, so a superflex QB room
+    // sitting at exactly 2-of-2 led the list and the Action Plan called it
+    // trade leverage (owner report 2026-09-02: "I've only got two starting
+    // QBs and it says I'm stacked… does that make any sense?").
     const strengths = Object.entries(posAssessment)
-      .filter(([, v]) => v.status === 'surplus')
+      .filter(([, v]) => v.status === 'surplus' && v.nflStarters > v.minQuality)
+      .sort((a, b) => {
+        const qa = a[1].nflStarters - a[1].minQuality, qb = b[1].nflStarters - b[1].minQuality;
+        if (qb !== qa) return qb - qa;                                   // most spare quality first
+        return (b[1].actual - b[1].ideal) - (a[1].actual - a[1].ideal);  // then deepest bench
+      })
       .map(([pos]) => pos);
 
     return {
