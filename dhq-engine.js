@@ -2131,6 +2131,55 @@ async function loadLeagueIntel(){
     catch(e){window.dhqLog?.('rankRail',e);}
 
     // ═══════════════════════════════════════════════════════════════
+    // STEP 12c-2: SUPERFLEX QB MARKET ALIGNMENT (owner ruling 2026-09-02).
+    // In 2-QB formats the QB is the most valuable position on the field and
+    // the FantasyCalc feed is ALREADY priced for 2-QB leagues — yet the
+    // engine ran QBs on the same position weight as RB/WR and priced them
+    // 20-40% under that market (Burrow was priced below George Pickens).
+    // Two moves, SF leagues only, both fail-soft:
+    //   1. UPWARD market alignment — when the 2-QB market prices a QB above
+    //      DHQ, move 65% of the way up to it. Never pulls down (the sanity
+    //      rail already handles overrated QBs).
+    //   2. Live-starter floor — a QB starting for his NFL club (ESPN feed)
+    //      never prices below 40% of the median starting-QB value: "even
+    //      older QBs who are starters have value." Covers the age-cliff
+    //      case (Stafford) without touching the age curve itself.
+    if(isSF){
+      try{
+        const _qbPids=Object.keys(playerScores).filter(pid=>playerMeta[pid]?.pos==='QB'&&playerScores[pid]>0);
+        const _fcPids=Object.keys(playerScores).filter(pid=>(playerMeta[pid]?.fcValue||0)>0&&playerScores[pid]>0);
+        const _fcQb=_qbPids.filter(pid=>(playerMeta[pid].fcValue||0)>0);
+        if(_fcQb.length>=8&&_fcPids.length){
+          const _maxDHQ=Math.max(..._fcPids.map(pid=>playerScores[pid]));
+          const _maxFC=Math.max(..._fcPids.map(pid=>playerMeta[pid].fcValue));
+          const _scale=_maxFC>0?_maxDHQ/_maxFC:1;
+          _fcQb.forEach(pid=>{
+            const fcScaled=Math.round(playerMeta[pid].fcValue*_scale);
+            const before=playerScores[pid];
+            if(fcScaled>before){
+              playerScores[pid]=Math.min(10000,Math.round(before+(fcScaled-before)*0.65));
+              playerMeta[pid].sfQbAlign={before,market:fcScaled,after:playerScores[pid]};
+            }
+          });
+        }
+        const _roles=window.App?.NflRoles;
+        if(_roles?.settled?.()&&(_roles.count?.()||0)>0){
+          const _qbSlots=Math.max(totalTeams*2,16);
+          const _sorted=_qbPids.map(pid=>playerScores[pid]).sort((a,b)=>b-a);
+          const _median=_sorted[Math.floor(Math.min(_qbSlots,_sorted.length)/2)]||0;
+          const _floor=Math.round(_median*0.40);
+          if(_floor>0)_qbPids.forEach(pid=>{
+            const P=S.players?.[pid];
+            if(P&&playerScores[pid]<_floor&&_roles.starterRole(P)){
+              playerMeta[pid].sfQbFloor={before:playerScores[pid],floor:_floor};
+              playerScores[pid]=_floor;
+            }
+          });
+        }
+      }catch(e){window.dhqLog?.('sfQbAlign',e);}
+    }
+
+    // ═══════════════════════════════════════════════════════════════
     // STEP 12d: Early-career stash floor — inject the draft-capital / upside
     // signal the production-anchored veteran engine is blind to, so a 2nd/3rd-year
     // player who flashed but sits behind a depth chart can't crater to a deep-bench
