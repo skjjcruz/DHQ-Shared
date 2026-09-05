@@ -40,7 +40,11 @@
     "player-value.js",
     "draft-gameplan.js",
     "alex-voice.js",
-    "gm-mode.js"
+    "gm-mode.js",
+    "points-ledger.js",
+    "one-brain.js",
+    "values-v2.js",
+    "pff-snapshot.js"
   ],
   "data": [
     "draft-war-room/player.csv",
