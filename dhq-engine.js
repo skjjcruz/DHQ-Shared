@@ -19,7 +19,14 @@ function _dhqIsSandbox(){
 // Builds IDP value from real scoring data + draft history + FAAB market
 // ══════════════════════════════════════════════════════════════════
 
-const LI_CACHE_KEY='dhq_leagueintel_v15'; // v15 (2026-09-02): superflex QB market alignment — cached v14 values predate it
+// ═══ GRAFT PHASE 2: engine kill switch (owner-approved plan, 2026-09-05) ═══
+// Apps opt into the behavioral-model engine by setting
+// window.__DHQ_ENGINE_V2 = true BEFORE this file loads. Default: OFF —
+// and off means the original formula below runs byte-for-byte. The v2
+// store rides its own cache lane, so flipping the switch either way
+// never reads the other engine's cached values.
+const ENGINE_V2_FLAG=(typeof window!=='undefined'&&window.__DHQ_ENGINE_V2===true);
+const LI_CACHE_KEY=ENGINE_V2_FLAG?'dhq_leagueintel_v2_1':'dhq_leagueintel_v15'; // v15 (2026-09-02): superflex QB market alignment — cached v14 values predate it
 // LI staleness is season-aware: 8h is fine in the offseason (values drift
 // slowly), but during the regular season rosters/FAAB/trades move daily, so
 // the cache goes stale in 2h. Resolved at check time (not parse time) because
@@ -1156,8 +1163,67 @@ async function loadLeagueIntel(){
       scarcityMult[pos]=+mult.toFixed(3);
     });
 
-    const playerScores={};
-    const playerMeta={};
+    // ═══ GRAFT PHASE 2 (owner-approved plan, 2026-09-05) ═══
+    // The behavioral-model engine rides behind the kill switch above.
+    // It engages only for Sleeper leagues AND only when the v2 modules
+    // are actually loaded — anything missing silently means v1, never a
+    // crash. Non-Sleeper leagues always run the original engine.
+    const engineV2=ENGINE_V2_FLAG&&platform==='sleeper'&&!!(window.WrLabValuesV2&&window.WrLabPointsLedger&&window.WrLabOneBrain);
+    let playerScores,playerMeta,recentPlayers,scoringWeight,lineupContext,posDynastyWeight,rookieCount,vetBlendCount,sourceSnapshots;
+    if(engineV2){
+    // ═══════════════════════════════════════════════════════════════
+    // STEP 8 (ENGINE V2 — the ratified value formula): values-v2.js
+    // prices the one store every surface reads. The original formula
+    // (situation stack, FC blend, rank rail, SF-QB alignment, stash
+    // floors) lives in the else-branch below, untouched, and owns the
+    // market leash and rookie slot rule natively here.
+    // ═══════════════════════════════════════════════════════════════
+    const rosteredSetV2=new Set(S.rosters.flatMap(r=>r.players||[]));
+    let pffSnap={byName:{}};
+    try{if(window.DhqPffSnapshot&&window.DhqPffSnapshot.byName)pffSnap=window.DhqPffSnapshot;}catch(e){/* grades optional */}
+    const pprVal=(sc.rec!=null&&sc.rec>=0.9)?1:(sc.rec!=null&&sc.rec>=0.4)?0.5:0;
+    let fcRows=[];
+    try{const _fr=await fetch(`https://api.fantasycalc.com/values/current?isDynasty=true&numQbs=${isSF?2:1}&numTeams=${totalTeams}&ppr=${pprVal}`);if(_fr.ok)fcRows=await _fr.json();}catch(e){/* leash optional */}
+    const v2=window.WrLabValuesV2.computeFromData({
+      league:{league_id:S.currentLeagueId,scoring_settings:sc,roster_positions:rp,season:curSeason},
+      rosters:S.rosters,
+      playersData:S.players,
+      stA:seasonStatsRaw[curSeason-1]||{},
+      stB:seasonStatsRaw[curSeason-2]||{},
+      stCur:seasonStatsRaw[curSeason]||{},
+      pff:pffSnap.byName||{},
+      draftPicks:allDraftPicks.filter(dp=>parseInt(dp.season)===curSeason),
+      pickValues:dhqPickValues,
+      fcRows,
+    });
+    playerScores=v2.values;
+    playerMeta=v2.meta;
+    rookieCount=Object.keys(playerMeta).filter(pid=>playerMeta[pid].rookie).length;
+    vetBlendCount=Object.keys(playerMeta).filter(pid=>playerMeta[pid].mkt!=null).length;
+    sourceSnapshots={labV2:{waiver:v2.waiver,builtAt:new Date().toISOString()}};
+    // Slim rows + lineup context keep steps 9-11 and the AI tier tables fed.
+    recentPlayers=Object.keys(playerMeta)
+      .filter(pid=>rosteredSetV2.has(pid))
+      .map(pid=>({pid,pos:playerMeta[pid].pos,wPPG:playerMeta[pid].ppg||0,age:playerMeta[pid].age||0}))
+      .sort((a,b)=>b.wPPG-a.wPPG);
+    scoringWeight=_dhqPositionScoringWeights(avgThresh,starterCounts,positions);
+    lineupContext=DHQ_CORE?.buildLineupContext?DHQ_CORE.buildLineupContext({
+      rows:recentPlayers.map(p=>({pid:p.pid,position:p.pos,ppg:p.wPPG})),
+      rosterPositions:rp,totalTeams,positions,starterCounts,includeDefense:true
+    }):null;
+    const _idpSt=(starterCounts.DL||0)+(starterCounts.LB||0)+(starterCounts.DB||0);
+    const _idpWt=_idpSt>=6?0.80:_idpSt>=3?0.65:0.50;
+    const baseDynastyWeightV2={QB:1.0,RB:1.0,WR:1.0,TE:0.95,K:0.30,DL:_idpWt,LB:_idpWt,DB:_idpWt};
+    posDynastyWeight={};
+    positions.forEach(pos=>{
+      const lineupPos=lineupContext?.position?.[pos]||null;
+      const formatWeight=lineupPos?.importance||scoringWeight[pos]||1;
+      posDynastyWeight[pos]=+((baseDynastyWeightV2[pos]||0.80)*formatWeight).toFixed(3);
+    });
+    console.log('DHQ player values (ENGINE V2 formula): '+Object.keys(playerScores).length+' players priced, '+rookieCount+' rookies at slot');
+    }else{
+    playerScores={};
+    playerMeta={};
 
     // Build set of all rostered players across the league
     const rosteredSet=new Set(S.rosters.flatMap(r=>r.players||[]));
@@ -1189,7 +1255,7 @@ async function loadLeagueIntel(){
 	      });
 	    }
 
-	    const recentPlayers=Object.entries(playerSeasons)
+	    recentPlayers=Object.entries(playerSeasons)
 	      .filter(([pid,ps])=>{
 	        if(!(ps.seasons[curSeason]||ps.seasons[curSeason-1]||ps.seasons[curSeason-2]))return false;
 	        return true;
@@ -1431,8 +1497,8 @@ async function loadLeagueIntel(){
     // IDP weight scales with league format (more IDP starters = more valuable).
     const _idpSt=(starterCounts.DL||0)+(starterCounts.LB||0)+(starterCounts.DB||0);
     const _idpWt=_idpSt>=6?0.80:_idpSt>=3?0.65:0.50;
-    const scoringWeight=_dhqPositionScoringWeights(avgThresh,starterCounts,positions);
-    const lineupContext=DHQ_CORE?.buildLineupContext?DHQ_CORE.buildLineupContext({
+    scoringWeight=_dhqPositionScoringWeights(avgThresh,starterCounts,positions);
+    lineupContext=DHQ_CORE?.buildLineupContext?DHQ_CORE.buildLineupContext({
       rows:recentPlayers.map(p=>({pid:p.pid,position:p.pos,ppg:p.wPPG})),
       rosterPositions:rp,
       totalTeams,
@@ -1441,7 +1507,7 @@ async function loadLeagueIntel(){
       includeDefense:true
     }):null;
     const baseDynastyWeight={QB:1.0,RB:1.0,WR:1.0,TE:0.95,K:0.30,DL:_idpWt,LB:_idpWt,DB:_idpWt};
-    const posDynastyWeight={};
+    posDynastyWeight={};
     positions.forEach(pos=>{
       const lineupPos=lineupContext?.position?.[pos]||null;
       const formatWeight=lineupPos?.importance||scoringWeight[pos]||1;
@@ -1609,6 +1675,7 @@ async function loadLeagueIntel(){
       };
     });
     console.log('DHQ player values: '+Object.keys(playerScores).length+' players scored');
+    }
 
     // ═══════════════════════════════════════════════════════════════
     // STEP 9: Aggregate FAAB data (already fetched/cached above)
@@ -1827,6 +1894,7 @@ async function loadLeagueIntel(){
       };
     });
 
+    if(!engineV2){
     // ═══════════════════════════════════════════════════════════════
     // STEP 12: FantasyCalc market consensus blend
     //   Rookies (no DHQ score): 100% FC value (scaled to DHQ range)
@@ -1834,9 +1902,9 @@ async function loadLeagueIntel(){
     //   FC weight rises with disagreement, but is capped when the format has
     //   scoring or roster rules FantasyCalc cannot represent.
     // ═══════════════════════════════════════════════════════════════
-    let rookieCount=0;
-    let vetBlendCount=0;
-    const sourceSnapshots={};
+    rookieCount=0;
+    vetBlendCount=0;
+    sourceSnapshots={};
     try{
       const pprVal = (sc.rec != null && sc.rec >= 0.9) ? 1 : (sc.rec != null && sc.rec >= 0.4) ? 0.5 : 0;
       const marketCompatibility=DHQ_CORE?.fantasyCalcCompatibility?DHQ_CORE.fantasyCalcCompatibility({
@@ -2232,6 +2300,9 @@ async function loadLeagueIntel(){
       });
       if(stashFloorCount)console.log(`Early-career stash floor: lifted ${stashFloorCount} young players (capital + market backstop)`);
     }catch(e){window.dhqLog?.('earlyCareerFloor',e);}
+    }
+    // ENGINE V2: FC blend, rank rail, SF-QB alignment and stash floors are
+    // owned by the v2 formula natively (market leash + rookie slot rule).
 
     // ═══════════════════════════════════════════════════════════════
     // STORE EVERYTHING
@@ -2290,11 +2361,17 @@ async function loadLeagueIntel(){
   ${faabTxns.length} FAAB transactions
   ${(tradeTxns||[]).length} trade transactions across ${Object.keys(ownerProfiles).length} owners
   ${uniqueYears.length} seasons scored (${uniqueYears.join(',')})
-  Top player: ${topPlayer?.name} (${topPlayer?.pos}) wPPG=${topPlayer?.wPPG} DHQ=${playerScores[topPlayer?.pid]}
+  Top player: ${pName(topPlayer?.pid)||topPlayer?.name||topPlayer?.pid} (${topPlayer?.pos}) wPPG=${topPlayer?.wPPG} DHQ=${playerScores[topPlayer?.pid]}
   Pick 1.01 value: ${dhqPickValues[1]?.value}, R7 last pick: ${dhqPickValues[maxPicks]?.value}`);
 
     // Notify subscribers that LeagueIntel is ready (replaces direct render calls)
     if(window.DhqEvents)window.DhqEvents.emit('li:loaded',{source:'fresh'});
+
+    // ═══ GRAFT PHASE 2: one-brain bridge (flag-guarded) ═══
+    // With the v2 engine on, the ratified assessment brain computes
+    // after values land; team-assess overlays it when present. Any
+    // failure logs and leaves the original assessments untouched.
+    if(engineV2){_dhqComputeOneBrain(S).catch(e=>window.dhqLog?.('oneBrain',e));}
 
   }catch(e){
     console.warn('LeagueIntel error:',e);
@@ -2410,3 +2487,45 @@ window.livScore = livScore;
 window.livFAABRange = livFAABRange;
 window.livDraftADP = livDraftADP;
 window.faabBidStr = faabBidStr;
+
+
+// ═══ GRAFT PHASE 2: one-brain bridge (owner-approved plan, 2026-09-05) ═══
+// Runs only when the v2 engine is on. Computes the ratified assessment
+// brain (points ledger + one-brain) for the current league and posts it
+// at window.DhqBrain; team-assess.js overlays it onto assessments.
+function _dhqBrainPicksByOwner(S,curSeason){
+  const out={};
+  const years=[curSeason+1,curSeason+2,curSeason+3];
+  const rounds=5;
+  const ownerByKey={};
+  const byRid={};
+  (S.rosters||[]).forEach(r=>{
+    byRid[String(r.roster_id)]=r;
+    years.forEach(y=>{for(let rd=1;rd<=rounds;rd++)ownerByKey[y+'-'+rd+'-'+r.roster_id]=String(r.owner_id);});
+  });
+  (S.tradedPicks||[]).forEach(tp=>{
+    const y=Number(tp.season);if(years.indexOf(y)<0)return;
+    const key=y+'-'+tp.round+'-'+tp.roster_id;
+    const owner=byRid[String(tp.owner_id)];
+    if(key in ownerByKey&&owner)ownerByKey[key]=String(owner.owner_id);
+  });
+  Object.keys(ownerByKey).forEach(k=>{
+    const parts=k.split('-');
+    (out[ownerByKey[k]]=out[ownerByKey[k]]||[]).push({year:+parts[0],round:+parts[1]});
+  });
+  return out;
+}
+async function _dhqComputeOneBrain(S){
+  if(!window.WrLabPointsLedger||!window.WrLabOneBrain)return;
+  const lid=S.currentLeagueId;
+  const rawLg=(S.leagues||[]).find(l=>String(l.league_id)===String(lid));
+  if(!rawLg||!rawLg.scoring_settings)return;
+  const posOf=pid=>{const p=S.players&&S.players[pid];return p?p.position:null;};
+  const ledger=await window.WrLabPointsLedger.load({league:rawLg,rosters:S.rosters,posOf});
+  const curSeason=parseInt(rawLg.season,10)||new Date().getFullYear();
+  const brain=window.WrLabOneBrain.compute({ledger,leagueInfo:rawLg,rosters:S.rosters,posOf,picksByOwner:_dhqBrainPicksByOwner(S,curSeason)});
+  brain.leagueId=String(lid);
+  window.DhqBrain=brain;
+  try{if(window.DhqEvents)window.DhqEvents.emit('li:loaded',{source:'one-brain'});}catch(e){/* no-op */}
+  try{window.dispatchEvent(new CustomEvent('dhq:situation-changed',{detail:{source:'one-brain'}}));}catch(e){/* no-op */}
+}

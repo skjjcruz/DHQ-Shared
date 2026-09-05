@@ -863,12 +863,67 @@ window.App = window.App || {};
    * Assess all teams using War Room Scout globals.
    * @returns {Array} - array of assessment objects, or [] if data not loaded
    */
+  // ═══ GRAFT PHASE 2: one-brain overlay (owner-approved plan, 2026-09-05) ═══
+  // When the v2 engine is on and the brain has computed for THIS league
+  // (window.DhqBrain, posted by dhq-engine's bridge), every assessment
+  // read is rewritten to the ratified spec: health 60/25/15, pace-gated
+  // tiers, ruled power, quality-template needs/strengths, and audit rows
+  // that speak the quality template. Flag off or brain absent = untouched.
+  function _dhqBrainWindowOf(tier) {
+    return (tier === 'ELITE' || tier === 'CONTENDER') ? 'CONTENDING'
+      : tier === 'REBUILDING' ? 'REBUILDING' : 'TRANSITIONING';
+  }
+  function _dhqBrainActive() {
+    if (typeof window === 'undefined' || window.__DHQ_ENGINE_V2 !== true) return null;
+    const b = window.DhqBrain;
+    const S = window.S || window.App?.S;
+    if (!b || !b.byRosterId || !S) return null;
+    return String(b.leagueId) === String(S.currentLeagueId) ? b : null;
+  }
+  function _dhqBrainOverlay(a, rosterId) {
+    const brain = _dhqBrainActive();
+    if (!a || !brain) return a;
+    const ob = brain.byRosterId[String(rosterId != null ? rosterId : a.rosterId)];
+    if (!ob) return a;
+    try {
+      const needs = ob.needs.map(function (n) {
+        const old = (a.needs || []).filter(function (x) { return x.pos === n.pos; })[0] || {};
+        return Object.assign({}, old, { pos: n.pos, urgency: n.urgency, have: n.have, need: n.need });
+      });
+      const strengths = ob.strengths.map(function (s) { return s.pos; });
+      const posAssessment = Object.assign({}, a.posAssessment || {});
+      Object.keys(brain.template).forEach(function (pos) {
+        const have = ob.qualityCount[pos] || 0, need = brain.template[pos];
+        const st = have < need ? (need - have >= 2 ? 'deficit' : 'thin') : have > need ? 'surplus' : 'ok';
+        // Audit rows read nflStarters/startingReq for their "x/y starters"
+        // line — those speak the quality template, so a card can never say
+        // Stable in the row and Needs in the header (owner report 2026-09-05).
+        posAssessment[pos] = Object.assign({}, posAssessment[pos] || {}, {
+          status: st, nflStarters: have, startingReq: need,
+        });
+      });
+      return Object.assign({}, a, {
+        healthScore: ob.health,
+        tier: ob.tier, tierColor: ob.tierColor, tierBg: ob.tierBg,
+        window: _dhqBrainWindowOf(ob.tier),
+        weeklyPts: ob.weeklyPts, targetPts: ob.barTotal,
+        powerScore: ob.powerScore, powerRank: ob.powerRank,
+        needs: needs, strengths: strengths, posAssessment: posAssessment,
+        oneBrain: ob,
+      });
+    } catch (e) { return a; }
+  }
+  function _dhqBrainOverlayAll(list) {
+    if (!Array.isArray(list) || !_dhqBrainActive()) return list;
+    try { return list.map(function (a) { return _dhqBrainOverlay(a, a && a.rosterId); }); } catch (e) { return list; }
+  }
+
   function assessAllTeamsFromGlobal() {
     const S = window.S || window.App?.S;
     if (!S?.rosters?.length) return [];
     _adoptCloudPin(); // async, once per league-state — see the pin block above
     const sig = _assessSig();
-    if (_assessCache.sig === sig && _assessCache.all) return _assessCache.all;
+    if (_assessCache.sig === sig && _assessCache.all) return _dhqBrainOverlayAll(_assessCache.all);
 
     // Stability: if we have a pinned full-data snapshot for the CURRENT league
     // state (same rosters + week), serve it and don't recompute — this is what
@@ -880,7 +935,7 @@ window.App = window.App || {};
     if (pinned) {
       const pinnedById = new Map(pinned.map(a => [a.rosterId, a]));
       _assessCache = { sig, all: pinned, byId: pinnedById };
-      return pinned;
+      return _dhqBrainOverlayAll(pinned);
     }
 
     const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);
@@ -893,7 +948,7 @@ window.App = window.App || {};
     // sig-based cache lets settle as data lands on this first load); the pin then
     // keeps every later load rock-steady.
     if (_dataReady()) _savePin(rfp, all);
-    return all;
+    return _dhqBrainOverlayAll(all);
   }
 
   /**
@@ -912,7 +967,7 @@ window.App = window.App || {};
     if (!(_assessCache.sig === sig && _assessCache.byId)) {
       assessAllTeamsFromGlobal(); // (re)builds and caches the full pass
     }
-    return (_assessCache.byId && _assessCache.byId.get(rosterId)) || null;
+    return _dhqBrainOverlay((_assessCache.byId && _assessCache.byId.get(rosterId)) || null, rosterId);
   }
 
   // ─────────────────────────────────────────────────────────────
