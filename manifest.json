@@ -44,7 +44,8 @@
     "points-ledger.js",
     "one-brain.js",
     "values-v2.js",
-    "pff-snapshot.js"
+    "pff-snapshot.js",
+    "intent-reads.js"
   ],
   "data": [
     "draft-war-room/player.csv",
