@@ -1309,6 +1309,11 @@ window.OD.saveBigBoardBackup = async function(leagueId, board) {
     }
 };
 
+// Lets client code tell a guest session (no cloud lane, by design) apart
+// from a real save failure — the vault push uses this to invite sign-in
+// instead of logging a phantom error.
+window.OD.hasCloudIdentity = function() { return hasOwnerIdentity(); };
+
 window.OD.loadBigBoardBackup = async function(leagueId) {
     if (!leagueId) return null;
     const owner = getOwnerIdentity();

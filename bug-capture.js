@@ -143,6 +143,10 @@
 
   function captureError(error, tags, extra) {
     if (!enabled) return;
+    // Expected-condition throws (a signed-out visitor at a locked door,
+    // dhqCode 'signin_required') are invitations, not breakage — keep them
+    // out of Sentry and Mission Control's error tables.
+    if (error && error.dhqCode === 'signin_required') return;
     const err = error instanceof Error ? error : new Error(scrubString(error?.message || String(error || 'Unknown error')));
     if (!initialized || !window.Sentry?.captureException) {
       earlyEvents.push({ error: err, tags: tags || {}, extra: extra || null });

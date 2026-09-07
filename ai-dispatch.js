@@ -384,7 +384,14 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
   }
 
   // ── CLIENT-SIDE PATH: direct API calls with user's key ─────
-  if(!S.apiKey) throw new Error('No AI available. Connect your account or add an API key in Settings.');
+  if(!S.apiKey){
+    // A signed-out visitor at the AI door is an invitation, not breakage:
+    // server AI needs an account by design (so strangers can't drain the
+    // shared quota). Friendly copy + dhqCode so the capture layer skips it.
+    const gate = new Error('AI analysis is free with a DHQ account — sign in to turn it on, or add your own API key in Settings.');
+    gate.dhqCode = 'signin_required';
+    throw gate;
+  }
 
   // Fallback: if saved provider was removed (groq/grok), default to gemini
   const provider = PROVIDERS[effectiveProvider] ? effectiveProvider : 'gemini';
