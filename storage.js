@@ -73,7 +73,11 @@ const STORAGE_KEYS = {
 // error, evict only the rebuildable caches below, then retry the write
 // once. Never touches auth, prefs, boards, strategies, or custom events.
 const PURGEABLE_CACHE_PREFIXES = [
-  'dhq_hist_',           // per-league history cache (the whale; refetched on demand)
+  // The whale now lives in IndexedDB (2026-09-07): evicting it here forced a
+  // ~200-call cold rebuild of 5 seasons of league history, which a live draft
+  // then queued behind — the 20-25s draft-room wait. Only stray legacy
+  // localStorage copies are swept now; the IndexedDB copy is never touched.
+  'dhq_hist_',           // legacy per-league history copies (superseded by IndexedDB)
   'wr_compare_h2h_v3_',  // compare tab H2H meetings cache
   'wr_adp_market_v2_',   // ADP market cache (18h TTL)
   'fw_stats_',           // legacy season-stats blobs (superseded by IndexedDB)

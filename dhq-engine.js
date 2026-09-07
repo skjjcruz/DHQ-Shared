@@ -730,7 +730,30 @@ async function loadLeagueIntel(){
     // Supports Sleeper, MFL, ESPN, Yahoo through unified interface
     // ═══════════════════════════════════════════════════════════════
     const HIST_KEY=STORAGE_KEYS.HIST_KEY(S.currentLeagueId);
-    const histCache=DhqStorage.get(HIST_KEY, null);
+    // ── The whale moves to IndexedDB (owner report 2026-09-07) ───────
+    // dhq_hist_<lid> is a league's full multi-season history — several
+    // hundred KB — and living in localStorage made it the janitor's FIRST
+    // eviction on any quota error. Every eviction forced the cold path
+    // below: ~200 Sleeper calls (5 seasons of transactions, brackets and
+    // users) that the draft board then queues behind on the browser's
+    // ~6-connections-per-host limit. That is the 20-25s wait in a live
+    // draft. IndexedDB has room for it, so the cold build happens once
+    // per league instead of after every storage squeeze.
+    const readHistCache=async()=>{
+      try{const v=await DhqStorage.idbGet(HIST_KEY);if(v)return v;}catch(e){/* fall through to localStorage */}
+      const legacy=DhqStorage.get(HIST_KEY,null);
+      if(legacy){
+        // One-time lift: copy into IndexedDB, then free the quota it ate.
+        try{await DhqStorage.idbSet(HIST_KEY,legacy);DhqStorage.remove(HIST_KEY);}catch(e){/* keep the localStorage copy */}
+        return legacy;
+      }
+      return null;
+    };
+    const writeHistCache=(val)=>{
+      // Fire-and-forget: a cache write must never delay the board.
+      try{DhqStorage.idbSet(HIST_KEY,val);}catch(e){/* cache is optional */}
+    };
+    const histCache=await readHistCache();
     const platform=S.platform||'sleeper';
     const provider=window.DhqProviders?window.DhqProviders.getProvider(platform):null;
 
@@ -755,7 +778,7 @@ async function loadLeagueIntel(){
           try{
             const freshTrades=await provider.refreshTrades(curChain);
             tradeTxns=[...tradeTxns.filter(t=>parseInt(t.season)<curSeason),...freshTrades];
-            DhqStorage.set(HIST_KEY,{...histCache,tradeTxns,ts:Date.now()});
+            writeHistCache({...histCache,tradeTxns,ts:Date.now()});
             console.log(`[DHQ] Fast-path trade refresh (${platform}): ${freshTrades.length} current-season trades`);
           }catch(e){console.warn('[DHQ] fast-path trade refresh failed:',e?.message||e);}
         }
@@ -839,7 +862,7 @@ async function loadLeagueIntel(){
       }
 
       // Cache historical data
-      DhqStorage.set(HIST_KEY,{chain,draftPicks:allDraftPicks,draftMeta,faabTxns,tradeTxns,bracketData,leagueUsersHistory,ts:Date.now()});
+      writeHistCache({chain,draftPicks:allDraftPicks,draftMeta,faabTxns,tradeTxns,bracketData,leagueUsersHistory,ts:Date.now()});
       console.log(`DHQ COLD PATH (${platform}) complete in ${((performance.now()-t0)/1000).toFixed(1)}s: chain(${chain.length}), drafts(${allDraftPicks.length}), faab(${faabTxns.length}), trades(${tradeTxns.length}), brackets(${Object.keys(bracketData).length}), users(${Object.keys(leagueUsersHistory).length})`);
     }
 
