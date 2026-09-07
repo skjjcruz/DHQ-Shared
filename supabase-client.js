@@ -1309,6 +1309,36 @@ window.OD.saveBigBoardBackup = async function(leagueId, board) {
     }
 };
 
+// Board library (owner feature 2026-09-07): every big board this user has
+// published, from ANY device, so the draft room can offer "copy a board from
+// another league". Each row carries the storage key it was saved under —
+// which encodes the draft variant — so the caller can type-match without
+// loading a single board. Read-only and fail-open: no cloud, no rows.
+window.OD.listBigBoardDocs = async function() {
+    const owner = getOwnerIdentity();
+    const db = getClient();
+    if (!db || !isConfigured() || !hasOwnerIdentity()) return [];
+    try {
+        const { data, error } = await applyOwnerFilter(
+            db.from('player_tags').select('league_id, tags, updated_at'), owner
+        ).like('league_id', '%:bigboard');
+        if (error || !Array.isArray(data)) return [];
+        return data.map(row => {
+            const doc = row?.tags || {};
+            return {
+                leagueId: String(row?.league_id || '').replace(/:bigboard$/, ''),
+                key: doc.key || null,
+                data: doc.data || null,
+                ts: doc.ts || null,
+                updatedAt: row?.updated_at || null,
+            };
+        }).filter(r => r.key && r.data);
+    } catch (e) {
+        console.warn('[FW] listBigBoardDocs failed:', e);
+        return [];
+    }
+};
+
 // Lets client code tell a guest session (no cloud lane, by design) apart
 // from a real save failure — the vault push uses this to invite sign-in
 // instead of logging a phantom error.
