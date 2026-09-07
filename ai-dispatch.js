@@ -106,7 +106,10 @@ const AI_ROUTES = {
   'trade-chat': 'premium',
   'trade-scout': 'premium',
   'draft-scout': 'premium',
-  'pick-analysis': 'premium',
+  // Draft-night burst valve (2026-09-07): per-pick reactions ride the fast
+  // tier so a busy draft lives on the roomiest free lanes — mirrors the
+  // server's ai-analyze route table, which is the real authority.
+  'pick-analysis': 'fast',
   'player-scout': 'premium',
   'deep-analysis': 'deep',
   'league-report': 'deep',
