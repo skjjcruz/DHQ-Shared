@@ -280,6 +280,134 @@ DhqStorage.idbRemove = async function (key) {
   } catch (e) { return false; }
 };
 
+// ── Draft recap archive mirror (quota diet round 2, 2026-09-07) ──────────
+// Recap archives (wr_draft_recap_archive_<league>, up to 25 full drafts per
+// league) were the last big tenant left in localStorage's ~5MB allowance —
+// draftState.archiveRecap threw QuotaExceededError archiving a real draft.
+// They live in the IndexedDB blob store now, behind a synchronous in-memory
+// mirror so every caller keeps its sync read/write shape. Writes that land
+// while hydration is still in flight are queued and MERGED (never replace):
+// a pre-hydration caller computed its rows against an empty read, and a
+// blind replace would drop every recap already in the blob store.
+// If IndexedDB is unavailable the old localStorage lane keeps working.
+const RECAP_BLOB_KEY = 'wr_draft_recap_archive_all_v1';
+const RECAP_KEY_PREFIX = 'wr_draft_recap_archive_';
+const RECAP_MAX = 25;
+const _recapMirror = { lane: 'ls', ready: false, hydrating: false, data: {}, queue: [] };
+
+function _recapLsRead(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) { return []; }
+}
+
+function _recapMergeRows(base, extra) {
+  const byId = new Map();
+  [].concat(base || [], extra || []).forEach((row) => {
+    if (!row) return;
+    const id = row.id || ('recap_' + (row.savedAt || ''));
+    const prev = byId.get(id);
+    if (!prev || Number(row.archivedAt || row.savedAt || 0) >= Number(prev.archivedAt || prev.savedAt || 0)) byId.set(id, row);
+  });
+  return Array.from(byId.values())
+    .sort((a, b) => Number(b.savedAt || b.archivedAt || 0) - Number(a.savedAt || a.archivedAt || 0))
+    .slice(0, RECAP_MAX);
+}
+
+function _recapFlush() {
+  if (_recapMirror.lane !== 'idb') return;
+  DhqStorage.idbSet(RECAP_BLOB_KEY, _recapMirror.data).then((ok) => {
+    if (!ok) _log('recapArchive.flush', new Error('idbSet failed'));
+  });
+}
+
+function _recapApplyQueued(entry) {
+  if (_recapMirror.lane === 'idb') {
+    const cur = _recapMirror.data[entry.key];
+    _recapMirror.data[entry.key] = entry.op === 'delete'
+      ? (Array.isArray(cur) ? cur.filter((r) => r && r.id !== entry.recapId) : [])
+      : _recapMergeRows(cur, entry.rows);
+  } else {
+    const cur = _recapLsRead(entry.key);
+    const next = entry.op === 'delete'
+      ? cur.filter((r) => r && r.id !== entry.recapId)
+      : _recapMergeRows(cur, entry.rows);
+    try { localStorage.setItem(entry.key, JSON.stringify(next)); } catch (e) { _log('recapArchive.apply:' + entry.key, e); }
+  }
+}
+
+function _recapFinishHydration() {
+  const queued = _recapMirror.queue.splice(0);
+  queued.forEach(_recapApplyQueued);
+  _recapMirror.ready = true;
+  return queued.length;
+}
+
+function _recapHydrate() {
+  if (_recapMirror.hydrating) return;
+  _recapMirror.hydrating = true;
+  if (typeof window.indexedDB === 'undefined' || typeof localStorage === 'undefined') {
+    _recapFinishHydration(); // stays on the localStorage lane
+    return;
+  }
+  DhqStorage.idbGet(RECAP_BLOB_KEY).then((saved) => {
+    _recapMirror.lane = 'idb';
+    _recapMirror.data = (saved && typeof saved === 'object' && !Array.isArray(saved)) ? saved : {};
+    // One-time migration: lift archives still in localStorage into the blob
+    // store (newest copy of each recap wins), then free their quota.
+    let lifted = 0;
+    try {
+      Object.keys(localStorage).filter((k) => k.indexOf(RECAP_KEY_PREFIX) === 0).forEach((k) => {
+        const rows = _recapLsRead(k);
+        if (rows.length) { _recapMirror.data[k] = _recapMergeRows(_recapMirror.data[k], rows); lifted++; }
+        try { localStorage.removeItem(k); } catch (e) { /* leave it for the next boot */ }
+      });
+    } catch (e) { /* localStorage scan unavailable */ }
+    const applied = _recapFinishHydration();
+    if (lifted || applied) _recapFlush();
+    try { window.dispatchEvent(new CustomEvent('dhq:recap-archive-ready')); } catch (e) { /* no listeners yet */ }
+  }).catch(() => { _recapFinishHydration(); /* stays on the localStorage lane */ });
+}
+
+DhqStorage.recapArchive = {
+  keyFor(leagueId) { return RECAP_KEY_PREFIX + (leagueId || 'default'); },
+  get(key) {
+    if (!_recapMirror.ready || _recapMirror.lane !== 'idb') return _recapLsRead(key);
+    const rows = _recapMirror.data[key];
+    return Array.isArray(rows) ? rows : [];
+  },
+  set(key, rows) {
+    const clean = Array.isArray(rows) ? rows : [];
+    if (!_recapMirror.ready) { _recapMirror.queue.push({ op: 'merge', key, rows: clean }); return clean; }
+    if (_recapMirror.lane !== 'idb') {
+      try { localStorage.setItem(key, JSON.stringify(clean)); } catch (e) { _log('recapArchive.set:' + key, e); }
+      return clean;
+    }
+    _recapMirror.data[key] = clean;
+    _recapFlush();
+    return clean;
+  },
+  remove(key, recapId) {
+    if (!_recapMirror.ready) {
+      _recapMirror.queue.push({ op: 'delete', key, recapId });
+      return _recapLsRead(key).filter((r) => r && r.id !== recapId);
+    }
+    if (_recapMirror.lane !== 'idb') {
+      const next = _recapLsRead(key).filter((r) => r && r.id !== recapId);
+      try { localStorage.setItem(key, JSON.stringify(next)); } catch (e) { _log('recapArchive.remove:' + key, e); }
+      return next;
+    }
+    const cur = _recapMirror.data[key];
+    const next = (Array.isArray(cur) ? cur : []).filter((r) => r && r.id !== recapId);
+    _recapMirror.data[key] = next;
+    _recapFlush();
+    return next;
+  },
+};
+_recapHydrate();
+
 window.App.STORAGE_KEYS = STORAGE_KEYS;
 window.App.DhqStorage   = DhqStorage;
 window.STORAGE_KEYS     = STORAGE_KEYS;
