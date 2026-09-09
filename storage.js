@@ -375,6 +375,92 @@ function _recapHydrate() {
   }).catch(() => { _recapFinishHydration(); /* stays on the localStorage lane */ });
 }
 
+// ── Big-blob mirror (draft resume snapshots, 2026-09-09) ────────────
+// draftState.save threw QuotaExceededError 30 times during one live draft:
+// the mid-draft resume snapshot (300 pool rows + 600 slim rows + every pick)
+// is another whale in localStorage's ~5MB allowance, and losing it costs a
+// drafter their place. Same medicine as the recap archive: IndexedDB behind
+// a synchronous in-memory mirror, so save/load keep their sync shape.
+// Generic on purpose — any oversized rebuildable blob can ride this.
+const _blobMirror = { ready: false, hydrating: false, data: {}, queue: [] };
+
+function _blobKeys() {
+  // Keys this mirror owns. Anything matching migrates out of localStorage.
+  return ['wr_draft_cc_current_'];
+}
+
+function _blobOwns(key) {
+  return _blobKeys().some(p => String(key || '').indexOf(p) === 0);
+}
+
+function _blobFlush() {
+  DhqStorage.idbSet(BLOB_STORE_KEY, _blobMirror.data).then((ok) => {
+    if (!ok) _log('blobMirror.flush', new Error('idbSet failed'));
+  });
+}
+
+const BLOB_STORE_KEY = 'dhq_blob_mirror_v1';
+
+function _blobHydrate() {
+  if (_blobMirror.hydrating) return;
+  _blobMirror.hydrating = true;
+  if (typeof window.indexedDB === 'undefined' || typeof localStorage === 'undefined') {
+    _blobMirror.queue.splice(0); // no IndexedDB: callers stay on localStorage
+    return;
+  }
+  DhqStorage.idbGet(BLOB_STORE_KEY).then((saved) => {
+    _blobMirror.data = (saved && typeof saved === 'object' && !Array.isArray(saved)) ? saved : {};
+    // One-time lift of any legacy localStorage copies, then free that quota.
+    let lifted = 0;
+    try {
+      Object.keys(localStorage).filter(_blobOwns).forEach((k) => {
+        if (_blobMirror.data[k] === undefined) {
+          try { _blobMirror.data[k] = JSON.parse(localStorage.getItem(k)); lifted++; } catch (e) { /* unreadable */ }
+        }
+        try { localStorage.removeItem(k); } catch (e) { /* next boot */ }
+      });
+    } catch (e) { /* storage unreadable */ }
+    // Writes that landed mid-hydration win — they are newer than anything on disk.
+    const queued = _blobMirror.queue.splice(0);
+    queued.forEach((entry) => {
+      if (entry.op === 'remove') delete _blobMirror.data[entry.key];
+      else _blobMirror.data[entry.key] = entry.value;
+    });
+    _blobMirror.ready = true;
+    if (lifted || queued.length) _blobFlush();
+    try { window.dispatchEvent(new CustomEvent('dhq:blob-mirror-ready')); } catch (e) { /* no listeners */ }
+  }).catch(() => { _blobMirror.queue.splice(0); /* stays on localStorage */ });
+}
+
+DhqStorage.blob = {
+  owns: _blobOwns,
+  get(key) {
+    if (_blobMirror.ready) {
+      const v = _blobMirror.data[key];
+      return v === undefined ? null : v;
+    }
+    // Pre-hydration (or no IndexedDB): the legacy localStorage copy still serves.
+    try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : null; } catch (e) { return null; }
+  },
+  set(key, value) {
+    if (!_blobMirror.ready) {
+      _blobMirror.queue.push({ op: 'set', key, value });
+      // Best-effort local copy so a reload before hydration still resumes.
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* quota — the mirror carries it */ }
+      return true;
+    }
+    _blobMirror.data[key] = value;
+    _blobFlush();
+    return true;
+  },
+  remove(key) {
+    if (!_blobMirror.ready) _blobMirror.queue.push({ op: 'remove', key });
+    else { delete _blobMirror.data[key]; _blobFlush(); }
+    try { localStorage.removeItem(key); } catch (e) { /* already gone */ }
+  },
+};
+_blobHydrate();
+
 DhqStorage.recapArchive = {
   keyFor(leagueId) { return RECAP_KEY_PREFIX + (leagueId || 'default'); },
   get(key) {
