@@ -1,0 +1,2 @@
+REPRODUCED: A cloud connection installs league/year/franchise keys after B signs in, before provider entry.
+REPRODUCED: delayed franchise selection combines pending 12345/2025 data with current 99999/2026 connection.

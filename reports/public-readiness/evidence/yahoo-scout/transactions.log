@@ -1,0 +1,53 @@
+[Yahoo] transactions fetch failed: controlled outage
+PASS failed first feed is unavailable, not verified empty
+PASS completed trade maps shared assets and timestamp without inventing week
+PASS mapper resolves known crosswalk IDs and keeps unmapped Yahoo IDs namespaced
+[Yahoo] transactions fetch failed: controlled outage
+PASS failed refresh preserves confirmed data and timestamp
+[Yahoo] transactions fetch failed: controlled outage
+PASS verified empty retry can replace stale confirmed rows
+[Yahoo] transactions fetch failed: controlled outage
+PASS confirmed empty failure becomes stale and preserves timestamp
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction type or completion status is missing.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction type or completion status is missing.
+PASS missing malformed or truncated collections never certify empty
+[Yahoo] transactions fetch failed: controlled outage
+[Yahoo] transactions fetch failed: controlled outage
+[Yahoo] transactions fetch failed: controlled outage
+PASS pending rejected and unknown states are visibly excluded from completed history
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction type or completion status is missing.
+PASS missing completion status is unavailable, not filtered into empty success
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade players are incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade players are incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade ID or timestamp is invalid.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade ID or timestamp is invalid.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade ID or timestamp is invalid.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: unexpected transaction type.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade player or movement is missing.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade refers to an unconfirmed team.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade ID or timestamp is invalid.
+PASS incomplete movement, team membership, duplicates and timestamp never publish partial success
+PASS foreign league season and game fail the original identity boundary
+[Yahoo] transactions fetch failed: controlled outage
+[Yahoo] transactions fetch failed: controlled outage
+[Yahoo] transactions fetch failed: controlled outage
+PASS cache cannot cross account, provider session or observed storage generation
+[Yahoo] transactions fetch failed: outage
+[Yahoo] transactions fetch failed: outage
+PASS cache cannot cross selected league or historical season
+[Yahoo] transactions fetch failed: controlled outage
+PASS view replacement keeps same account confirmed feed without retaining dead caller closure
+PASS account or caller change during failed transaction cannot become stale publication
+[Yahoo] transactions fetch failed: Yahoo connection was not confirmed. Start a new connection from this tab.
+PASS transport timeout is unavailable and subsequent retry works
+[Yahoo] transactions fetch failed: Yahoo connection was not confirmed. Start a new connection from this tab.
+PASS body timeout is unavailable and subsequent retry works
+PASS mounted retry guard cannot adopt another account or reconnect and stays retired
+Yahoo transactions: 18 passed, 0 failed

@@ -1,0 +1,87 @@
+[Yahoo] transactions fetch failed: controlled outage
+FAIL failed first feed is unavailable, not verified empty TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:14:187
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:14:1)
+FAIL completed trade maps shared assets and timestamp without inventing week TypeError: Cannot read properties of undefined (reading '0')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:15:192
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:15:1)
+FAIL mapper resolves known crosswalk IDs and keeps unmapped Yahoo IDs namespaced TypeError: Cannot read properties of undefined (reading 'sleeper-123')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:16:242
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:84)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:16:7)
+[Yahoo] transactions fetch failed: controlled outage
+FAIL failed refresh preserves confirmed data and timestamp AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ '{}'
+- '{"w0":[{"type":"trade","status":"complete","timestamp":1789900000000,"week":27,"sides":[{"roster_id":"1","adds":["yahoo_123"],"drops":[]}],"_source":"yahoo"}]}'
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:17:191
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:17:1)
+[Yahoo] transactions fetch failed: controlled outage
+FAIL verified empty retry can replace stale confirmed rows TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:18:202
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:18:1)
+[Yahoo] transactions fetch failed: controlled outage
+FAIL confirmed empty failure becomes stale and preserves timestamp TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:19:252
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:19:1)
+FAIL missing malformed or truncated collections never certify empty TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:20:390
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:20:1)
+FAIL pending rejected and unknown states are visibly excluded from completed history AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+2 !== 1
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:21:331
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:21:1)
+FAIL missing completion status is unavailable, not filtered into empty success TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:22:252
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:22:1)
+FAIL incomplete movement, team membership, duplicates and timestamp never publish partial success TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:23:664
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:23:1)
+FAIL foreign league season and game fail the original identity boundary AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:24:573
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:24:1)
+[Yahoo] transactions fetch failed: controlled outage
+FAIL cache cannot cross account, provider session or observed storage generation TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:25:347
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:25:1)
+[Yahoo] transactions fetch failed: outage
+FAIL cache cannot cross selected league or historical season TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:26:811
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:26:1)
+[Yahoo] transactions fetch failed: controlled outage
+FAIL view replacement keeps same account confirmed feed without retaining dead caller closure TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:27:303
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:27:1)
+PASS account or caller change during failed transaction cannot become stale publication
+[Yahoo] transactions fetch failed: Yahoo connection was not confirmed. Start a new connection from this tab.
+FAIL transport timeout is unavailable and subsequent retry works TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:29:426
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:29:40)
+[Yahoo] transactions fetch failed: Yahoo connection was not confirmed. Start a new connection from this tab.
+FAIL body timeout is unavailable and subsequent retry works TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:29:426
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:78)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:29:40)
+FAIL mounted retry guard cannot adopt another account or reconnect and stays retired TypeError: x.api.provider.captureContext is not a function
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:30:228
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:13:84)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-transactions/tests/yahoo-transactions.cjs:30:7)
+Yahoo transactions: 1 passed, 17 failed

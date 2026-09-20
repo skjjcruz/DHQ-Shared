@@ -1,0 +1,26 @@
+FAIL delayed A API data never resolves into current B Missing expected rejection.
+FAIL body parsing is fenced after account changes Missing expected rejection.
+FAIL new Yahoo session in same account invalidates a late response Missing expected rejection.
+FAIL hydrate account change stops follow-up transactions and raw cache Missing expected rejection.
+FAIL caller selection supersession stops hydration before mapping Missing expected rejection.
+[Yahoo] transactions fetch failed: not permitted
+FAIL account change during optional transactions cannot be swallowed Missing expected rejection.
+FAIL caller supersession during transactions prevents final publication Missing expected rejection.
+FAIL cached raw league cannot cross account boundary Expected values to be strictly equal:
++ actual - expected
+
++ 'Private A'
+- 'Private B'
+           ^
+
+FAIL cached raw league is invalidated by provider reconnect or same-token storage event Expected values to be strictly equal:
+
+'Before' !== 'After'
+
+PASS same context retains usable cache and ordinary mapped values
+FAIL legacy connect cannot overwrite replaced active S or selected league Missing expected rejection.
+FAIL later legacy Yahoo connect supersedes earlier operation Missing expected rejection.
+PASS legacy connect still writes confirmed current results
+[Yahoo] transactions fetch failed: provider outage
+PASS ordinary optional transaction outage preserves existing non-transaction result
+Yahoo data context: 3 passed, 11 failed

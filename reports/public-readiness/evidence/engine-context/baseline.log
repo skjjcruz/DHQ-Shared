@@ -1,0 +1,5 @@
+baseline full engine scores {"100":8539,"101":5810,"102":8513,"103":4899,"104":4745,"105":3527,"106":3166,"107":1208}
+baseline warnings [["warn","[DHQ:sitMult] extreme raw multiplier","[object Object]"],["warn","[DHQ:sitMult] extreme raw multiplier","[object Object]"]]
+REPRODUCED cache requested under111 accepted222 after await
+REPRODUCED explicit222 ignored, builds active111 and publishes globalLI
+REPRODUCED old111 build published underB and saved as league222

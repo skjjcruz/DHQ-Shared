@@ -87,55 +87,107 @@ const SUPABASE_ANON = CONFIG.supabaseAnon
 let _crosswalk = null;
 let _crosswalkYear = null;
 
-// ── Fetch helpers ─────────────────────────────────────────────────
+// ── Request boundaries ─────────────────────────────────────────────
+// Capture the caller and credential stores once. A response may finish after
+// account/league navigation; it must not start a follow-up with old cookies and
+// a newly read app token. The server still authenticates the captured token.
+const ESPN_BOUNDARY_KEYS = ['fw_session_v1', 'od_session_v1', 'od_auth_v1', 'wr_guest_v1', 'espn_league_id', 'espn_year', 'espn_s2', 'espn_swid'];
+let _espnBoundary = 0;
+window.addEventListener?.('storage', event => {
+  if (!event.key || ESPN_BOUNDARY_KEYS.includes(event.key) || event.key.startsWith('espn_creds_') || /^sb-.*-auth-token$/.test(event.key)) _espnBoundary++;
+});
+function _requestContext(leagueKey, options) {
+  const keys = leagueKey ? [...ESPN_BOUNDARY_KEYS, 'espn_creds_' + leagueKey] : ESPN_BOUNDARY_KEYS;
+  const read = () => [...keys.map(key => localStorage.getItem(key)), sessionStorage.getItem('espn_s2'), sessionStorage.getItem('espn_swid')];
+  const values = read(), version = _espnBoundary;
+  const observedToken = window.OD?.getSessionToken?.() || null;
+  let token = observedToken;
+  const appSessionRaw = values[0];
+  if (appSessionRaw) {
+    try {
+      const session = JSON.parse(appSessionRaw), parts = String(session.token || '').split('.');
+      const claims = JSON.parse(window.atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (parts.length !== 3 || typeof session.user?.id !== 'string' || !session.user.id
+          || claims.sub !== session.user.id || claims.app_metadata?.user_id !== session.user.id
+          || !Number.isFinite(claims.exp) || claims.exp * 1000 <= Date.now()
+          || (observedToken && observedToken !== session.token)) throw new Error('identity');
+      token = session.token;
+    } catch (_) { throw new Error('Your app session is incomplete or expired. Sign in again before loading ESPN.'); }
+  }
+  const timeoutMs = Number.isFinite(options?.timeoutMs) && options.timeoutMs > 0 ? Math.min(options.timeoutMs, 20000) : 20000;
+  const scope = {
+    token, timeoutMs,
+    assertCurrent() {
+      const now = read();
+      if (version !== _espnBoundary || !now.every((value, i) => value === values[i])
+          || (window.OD?.getSessionToken?.() || null) !== observedToken
+          || (typeof options?.isCurrent === 'function' && !options.isCurrent())) {
+        throw new Error('Your account or ESPN connection changed. Reload before continuing.');
+      }
+    },
+  };
+  scope.assertCurrent();
+  return scope;
+}
+function _validateLeague(raw, leagueId, year) {
+  const teams = raw?.teams;
+  if (!raw || raw.error || String(raw.id) !== String(leagueId) || String(raw.seasonId) !== String(year)
+      || typeof raw.settings?.name !== 'string' || !raw.settings.name.trim()
+      || !raw.settings.rosterSettings?.lineupSlotCounts || typeof raw.settings.rosterSettings.lineupSlotCounts !== 'object'
+      || !Object.values(raw.settings.rosterSettings.lineupSlotCounts).some(count => Number.isFinite(count) && count > 0)
+      || !Array.isArray(raw.settings.scoringSettings?.scoringItems) || !raw.settings.scoringSettings.scoringItems.length
+      || !Array.isArray(teams) || !teams.length
+      || teams.some(team => !team || team.id == null || !Array.isArray(team.roster?.entries))
+      || new Set(teams.map(team => String(team.id))).size !== teams.length
+      || (raw.settings.size != null && Number(raw.settings.size) !== teams.length)) {
+    throw new Error('ESPN did not return the complete league and rosters for the requested season. Try loading it again.');
+  }
+  return raw;
+}
 
-/**
- * Fetch ESPN league data. Routes through Supabase proxy when credentials
- * are provided (for private leagues). Falls back to direct fetch (works
- * when user is logged into ESPN in the same browser).
- */
-async function fetchLeague(leagueId, year, espnS2, swid) {
+// ── Fetch helpers ─────────────────────────────────────────────────
+async function fetchLeague(leagueId, year, espnS2, swid, requestContext) {
   const views = ['mTeam', 'mRoster', 'mSettings'];
   const viewStr = views.map(v => 'view=' + v).join('&');
   const url = `${ESPN_BASE}/seasons/${year}/segments/0/leagues/${leagueId}?${viewStr}`;
-
-  return _espnGet(url, espnS2, swid);
+  return _validateLeague(await _espnGet(url, espnS2, swid, requestContext), leagueId, year);
 }
-
-async function fetchTransactions(leagueId, year, espnS2, swid) {
+async function fetchTransactions(leagueId, year, espnS2, swid, requestContext) {
   const url = `${ESPN_BASE}/seasons/${year}/segments/0/leagues/${leagueId}?view=mTransactions2`;
-  return _espnGet(url, espnS2, swid);
+  return _espnGet(url, espnS2, swid, requestContext);
 }
-
-async function _espnGet(url, espnS2, swid) {
-  // With credentials: route through proxy
-  if (espnS2 && swid) {
-    const token = window.OD?.getSessionToken ? window.OD.getSessionToken() : null;
-    const res = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token || SUPABASE_ANON}`,
-        'apikey': SUPABASE_ANON,
-      },
-      body: JSON.stringify({ url, espnS2, swid }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'ESPN proxy error ' + res.status);
-    }
-    return res.json();
-  }
-
-  // Without credentials: direct fetch (works for public leagues or logged-in ESPN users)
-  const res = await fetch(url, { credentials: 'include' });
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      throw new Error('This ESPN league is private. Provide your espn_s2 and SWID cookies to connect.');
-    }
-    throw new Error('ESPN API error ' + res.status + '. Make sure your League ID is correct.');
-  }
-  return res.json();
+async function _espnGet(url, espnS2, swid, requestContext) {
+  const scope = requestContext || _requestContext();
+  scope.assertCurrent();
+  if (!!espnS2 !== !!swid) throw new Error('Add both espn_s2 and SWID cookies for this private league.');
+  const controller = new AbortController();
+  let timer;
+  try {
+    return await Promise.race([
+      (async () => {
+        const privateLeague = !!(espnS2 && swid);
+        const res = await fetch(privateLeague ? PROXY_URL : url, privateLeague ? {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${scope.token || SUPABASE_ANON}`, 'apikey': SUPABASE_ANON },
+          body: JSON.stringify({ url, espnS2, swid }), signal: controller.signal,
+        } : { credentials: 'include', signal: controller.signal });
+        scope.assertCurrent();
+        if (!res.ok) {
+          const error = await res.json().catch(() => ({}));
+          scope.assertCurrent();
+          if (privateLeague) throw new Error(error.error || 'ESPN proxy error ' + res.status);
+          if (res.status === 401 || res.status === 403) throw new Error('This ESPN league is private. Provide your espn_s2 and SWID cookies to connect.');
+          throw new Error('ESPN API error ' + res.status + '. Make sure your League ID is correct.');
+        }
+        const data = await res.json();
+        scope.assertCurrent();
+        return data;
+      })(),
+      new Promise((_, reject) => { timer = setTimeout(() => {
+        controller.abort(); reject(new Error('ESPN took too long to respond. Try loading the league again.'));
+      }, scope.timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 // ── Data mappers ──────────────────────────────────────────────────
@@ -210,20 +262,35 @@ function mapESPNRoster(team, crosswalk) {
 }
 
 /**
- * Map ESPN transactions → array of Sleeper-compatible transaction objects.
+ * Map an ESPN executed trade to shared transaction and received-side contracts.
+ * Pending, rejected and unknown provider statuses are never completed history.
  */
-function mapESPNTrade(espnTx) {
-  if (!espnTx || espnTx.type !== 'TRADE') return null;
+function mapESPNTrade(espnTx, crosswalk = {}) {
+  if (!espnTx || espnTx.type !== 'TRADE' || espnTx.status !== 'EXECUTED') return null;
+  const playerId = player => crosswalk[player.id] || ('espn_' + player.id);
+  const teamMoves = (espnTx.teams || []).map(side => ({
+    roster_id: String(side.fromTeamId),
+    adds: (side.playersAdded || []).map(playerId),
+    drops: (side.playersDropped || []).map(playerId),
+  }));
+  const timestamp = espnTx.executionDate || espnTx.proposedDate || 0;
+  const adds = {}, drops = {};
+  const sides = {};
+  teamMoves.forEach(side => {
+    sides[side.roster_id] = { players: [...side.adds], picks: [] };
+    side.adds.forEach(id => { adds[id] = side.roster_id; });
+    side.drops.forEach(id => { drops[id] = side.roster_id; });
+  });
   return {
     type: 'trade',
-    status: espnTx.status === 'EXECUTED' ? 'complete' : 'pending',
-    timestamp: espnTx.executionDate || espnTx.proposedDate || 0,
+    status: 'complete',
+    timestamp,
+    created: espnTx.proposedDate || timestamp,
+    status_updated: timestamp,
+    roster_ids: teamMoves.map(side => side.roster_id),
+    adds, drops,
     week: espnTx.scoringPeriodId || 0,
-    sides: (espnTx.teams || []).map(side => ({
-      roster_id: String(side.fromTeamId),
-      adds: (side.playersAdded || []).map(p => p.id),
-      drops: (side.playersDropped || []).map(p => p.id),
-    })),
+    sides,
     _source: 'espn',
   };
 }
@@ -445,8 +512,10 @@ async function connectLeague(leagueId, year, espnS2, swid, myTeamId) {
   if (!S) throw new Error('window.S not initialized');
 
   // ── 1. Fetch ESPN data ──
-  const raw = await fetchLeague(leagueId, year, espnS2, swid);
-  if (!raw || !raw.teams) throw new Error('Invalid ESPN league data. Check your League ID.');
+  const activeId = S.currentLeagueId;
+  const scope = _requestContext('espn_' + leagueId + '_' + year, { isCurrent: () => (window.S || window.App?.S) === S && S.currentLeagueId === activeId });
+  const raw = _validateLeague(await fetchLeague(leagueId, year, espnS2, swid, scope), leagueId, year);
+  scope.assertCurrent();
 
   // ── 2. Build player crosswalk against Sleeper player DB ──
   // Use whatever Sleeper player data is already in S.players (may be empty)
@@ -495,13 +564,47 @@ async function connectLeague(leagueId, year, espnS2, swid, myTeamId) {
 // left empty.
 
 const _espnRawStash = {};
-function _stashEspnRaw(leagueId, year, raw) {
-  _espnRawStash[leagueId + '_' + year] = { raw, ts: Date.now() };
+// Transaction failures must not erase the last confirmed feed. The cache is
+// memory-only and bound to account/connection, independently of a mounted view.
+const _espnTransactionStash = new Map();
+function _transactionRows(raw, leagueId, year, crosswalk, rosters) {
+  if (!raw || !Array.isArray(raw.topics) ||
+      (raw.id != null && String(raw.id) !== String(leagueId)) ||
+      (raw.seasonId != null && String(raw.seasonId) !== String(year)) ||
+      raw.topics.some(topic => !topic || typeof topic !== 'object' || typeof topic.type !== 'string')) {
+    throw new Error('ESPN did not return a usable trade feed for this league and season.');
+  }
+  const owners = new Set(rosters.map(roster => String(roster.roster_id)));
+  const trades = raw.topics.filter(topic => topic.type === 'TRADE');
+  if (trades.some(topic => typeof topic.status !== 'string' || !topic.status.trim())) {
+    throw new Error('ESPN returned a trade without a usable completion status.');
+  }
+  trades.filter(topic => topic.status === 'EXECUTED').forEach(topic => {
+    const teams = topic.teams;
+    if (!Array.isArray(teams) || teams.length < 2 || new Set(teams.map(team => String(team?.fromTeamId))).size !== teams.length ||
+        teams.some(team => !owners.has(String(team?.fromTeamId)) || (team.playersAdded != null && !Array.isArray(team.playersAdded)) || (team.playersDropped != null && !Array.isArray(team.playersDropped)) ||
+          [...(team.playersAdded || []), ...(team.playersDropped || [])].some(player => !/^\d+$/.test(String(player?.id ?? '')))) ||
+        !teams.some(team => team.playersAdded?.length || team.playersDropped?.length)) {
+      throw new Error('ESPN returned an incomplete trade.');
+    }
+  });
+  return { rows: trades.map(topic => mapESPNTrade(topic, crosswalk)).filter(Boolean),
+    excludedTradeCount: trades.filter(topic => topic.status !== 'EXECUTED').length };
 }
-function _getEspnStashedRaw(leagueId, year) {
+function _cachedTransactions(key, scope, espnS2, swid) {
+  const saved = _espnTransactionStash.get(key);
+  if (!saved || saved.scope.token !== scope.token || saved.espnS2 !== (espnS2 || null) || saved.swid !== (swid || null)) return null;
+  try { saved.scope.assertCurrent(); scope.assertCurrent(); } catch (_) { return null; }
+  return saved;
+}
+function _stashEspnRaw(leagueId, year, raw, scope, espnS2, swid) {
+  _espnRawStash[leagueId + '_' + year] = { raw, scope, espnS2: espnS2 || null, swid: swid || null, ts: Date.now() };
+}
+function _getEspnStashedRaw(leagueId, year, scope, espnS2, swid) {
   const entry = _espnRawStash[leagueId + '_' + year];
   if (!entry) return null;
-  if (Date.now() - entry.ts > 5 * 60 * 1000) return null;
+  if (Date.now() - entry.ts > 5 * 60 * 1000 || entry.scope.token !== scope.token || entry.espnS2 !== (espnS2 || null) || entry.swid !== (swid || null)) return null;
+  try { entry.scope.assertCurrent(); scope.assertCurrent(); } catch (_) { return null; }
   return entry.raw;
 }
 
@@ -569,11 +672,10 @@ const EspnProvider = {
     if (!numericId) throw new Error('ESPN league ID must be numeric');
     const yr = year || String(new Date().getFullYear());
 
-    const raw = await fetchLeague(numericId, yr, espnS2 || null, swid || null);
-    if (!raw || !raw.teams) {
-      throw new Error('Invalid ESPN league data. Check your League ID.');
-    }
-    _stashEspnRaw(numericId, yr, raw);
+    const scope = _requestContext('espn_' + numericId + '_' + yr);
+    const raw = _validateLeague(await fetchLeague(numericId, yr, espnS2 || null, swid || null, scope), numericId, yr);
+    scope.assertCurrent();
+    _stashEspnRaw(numericId, yr, raw, scope, espnS2, swid);
 
     const settings = raw.settings || {};
     return {
@@ -597,19 +699,22 @@ const EspnProvider = {
 
   // ── Phase 2: HYDRATE ────────────────────────────────────────────
   async hydrate(league, ctx) {
+    const scope = _requestContext(league.id, ctx);
     const creds = league._platformCreds || this.loadCredentials(league.id) || {};
-    const leagueId = creds.leagueId || league._espnLeagueId;
-    const year = creds.year || league.season || String(new Date().getFullYear());
+    const leagueId = league._espnLeagueId || creds.leagueId;
+    const year = league.season || creds.year || String(new Date().getFullYear());
+    if ((creds.leagueId != null && String(creds.leagueId) !== String(leagueId)) || (creds.year != null && String(creds.year) !== String(year))) {
+      throw new Error('The saved ESPN credentials do not match this league and season. Reconnect the league.');
+    }
     const espnS2 = creds.espnS2 || null;
     const swid = creds.swid || null;
     if (!leagueId) throw new Error('ESPN league credentials missing');
 
     const context = ctx || {};
     const sleeperPlayers = context.sleeperPlayers || {};
-    const currentWeek = context.currentWeek != null ? context.currentWeek : 0;
 
-    const raw = _getEspnStashedRaw(leagueId, year) || await fetchLeague(leagueId, year, espnS2, swid);
-    if (!raw || !raw.teams) throw new Error('ESPN league fetch returned no data');
+    const raw = _validateLeague(_getEspnStashedRaw(leagueId, year, scope, espnS2, swid) || await fetchLeague(leagueId, year, espnS2, swid, scope), leagueId, year);
+    scope.assertCurrent();
 
     // Rebuild crosswalk against the real Sleeper player DB
     try { localStorage.removeItem('espn_crosswalk_' + year); } catch (e) {}
@@ -621,18 +726,36 @@ const EspnProvider = {
     // Fetch transactions — ESPN provides trades via mTransactions2 view.
     // connectLeague() historically left this empty; the provider fills it.
     let txns = [];
+    const transactionKey = String(leagueId) + '_' + String(year);
+    const checkedAt = Date.now();
+    let transactionStatus;
     try {
-      const txnRaw = await fetchTransactions(leagueId, year, espnS2, swid);
-      const topics = txnRaw?.topics || [];
-      txns = topics
-        .map(t => mapESPNTrade(t))
-        .filter(Boolean);
+      scope.assertCurrent();
+      const txnRaw = await fetchTransactions(leagueId, year, espnS2, swid, scope);
+      scope.assertCurrent();
+      const feed = _transactionRows(txnRaw, leagueId, year, crosswalk, mapped.rosters);
+      txns = feed.rows;
+      const lastSuccessAt = Date.now();
+      _espnTransactionStash.set(transactionKey, {
+        rows: JSON.stringify(txns), lastSuccessAt, excludedTradeCount: feed.excludedTradeCount,
+        scope: _requestContext(league.id), espnS2, swid,
+      });
+      transactionStatus = { status: 'ready', lastSuccessAt, excludedTradeCount: feed.excludedTradeCount };
     } catch (e) {
+      scope.assertCurrent();
+      const saved = _cachedTransactions(transactionKey, scope, espnS2, swid);
+      if (saved) txns = JSON.parse(saved.rows);
+      transactionStatus = { status: saved ? 'stale' : 'unavailable', lastSuccessAt: saved?.lastSuccessAt || null, excludedTradeCount: saved?.excludedTradeCount || 0,
+        message: saved ? 'ESPN trades could not refresh. Showing the last confirmed feed.' : 'ESPN trades are unavailable. This does not mean there were no trades.' };
       console.warn('[ESPN] transactions fetch failed:', e?.message || e);
     }
+    scope.assertCurrent();
 
-    const wkKey = 'w' + currentWeek;
-    const transactionsByWeek = txns.length ? { [wkKey]: txns } : {};
+    const transactionsByWeek = {};
+    txns.forEach(txn => {
+      const key = 'w' + (Number.isInteger(Number(txn.week)) && Number(txn.week) > 0 ? Number(txn.week) : 0);
+      (transactionsByWeek[key] ||= []).push(txn);
+    });
 
     return {
       league: mapped.league,
@@ -640,6 +763,8 @@ const EspnProvider = {
       leagueUsers: mapped.leagueUsers,
       players: mapped.players || {},
       transactions: transactionsByWeek,
+      transactionStatus: { ...transactionStatus, provider: 'espn', leagueId: mapped.league.league_id,
+        season: String(year), scope: 'executed_trades', checkedAt },
       tradedPicks: [],
       drafts: [],
       matchups: [],

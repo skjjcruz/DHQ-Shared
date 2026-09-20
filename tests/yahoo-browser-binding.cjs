@@ -1,0 +1,48 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const path = require('node:path');
+const crypto = require('node:crypto').webcrypto;
+const source = fs.readFileSync(process.env.YAHOO_MODULE_SOURCE || path.resolve(__dirname, '../yahoo-api.js'), 'utf8');
+const A='11111111-1111-4111-8111-111111111111',B='22222222-2222-4222-8222-222222222222';
+const token=(id=A,version=1)=>'fixture.'+Buffer.from(JSON.stringify({sub:id,app_metadata:{user_id:id,session_version:version}})).toString('base64url')+'.signature';
+const account=(id=A,version=1)=>JSON.stringify({token:token(id,version),user:{id}});
+const pendingKey='dhq_yahoo_pending_v2';
+const state='a'.repeat(64),sessionId='33333333-3333-4333-8333-333333333333';
+function storage(map, denied=()=>false) {return {getItem:k=>map.get(k)??null,setItem(k,v){if(denied(k))throw Error('fixture quota');map.set(k,String(v));},removeItem:k=>map.delete(k)};}
+function fixture(options={}) {
+  const local=options.local||new Map([['fw_session_v1',account()]]),session=options.session||new Map();
+  const requests=[],navigations=[],listeners={};let here=new URL(options.url||'https://dhqfootball.com/index.html?vault=1#league');
+  const location={get href(){return here.href;},set href(v){here=new URL(v,here);navigations.push(here.href);},get hash(){return here.hash;},get pathname(){return here.pathname;},get search(){return here.search;},replace(v){this.href=v;}};
+  const localStorage=storage(local),sessionStorage=storage(session,k=>options.quota?.(k));
+  const context={App:{Platforms:{register(){}}},location,localStorage,sessionStorage,URL,URLSearchParams,TextEncoder,AbortController,Uint8Array,Date,Promise,console,crypto,atob:v=>Buffer.from(v,'base64').toString(),setTimeout:(fn,ms)=>setTimeout(fn,options.fastTimeout?1:ms),clearTimeout,
+    history:{replaceState(_a,_b,url){here=new URL(url,here);}},addEventListener:(event,fn)=>{listeners[event]=fn;},
+    OD:{getSessionToken:()=>{try{return JSON.parse(local.get('fw_session_v1')||'null')?.token||null;}catch{return null;}}},
+    fetch:async(url,init)=>{const body=JSON.parse(init.body);requests.push({url,init,body});return options.fetch?options.fetch(body,init):Response.json(body.action==='auth_url'?{flow_version:'browser-verifier-v2',state,auth_url:'https://api.login.yahoo.com/oauth2/request_auth?state='+state}:{flow_version:'browser-verifier-v2',session_id:sessionId});},
+  };
+  context.window=context;vm.createContext(context);vm.runInContext(source,context);
+  return {context,api:context.Yahoo,requests,navigations,local,session,install:(id=B,version=1)=>local.set('fw_session_v1',account(id,version)),storageEvent:()=>listeners.storage({key:'fw_session_v1'}),setUrl:url=>{here=new URL(url);}};
+}
+const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return{resolve,promise};};
+const tick=()=>new Promise(r=>setTimeout(r,0));
+async function started(options={}){const x=fixture(options);await x.api.startAuth();return x;}
+function returned(x,options={}){const result=fixture({local:x.local,session:x.session,...options});result.context.__DHQ_YAHOO_CALLBACK={state,code:'fixture-code'};return result;}
+async function run(){let pass=0,fail=0;const test=async(name,fn)=>{try{await fn();pass++;console.log('PASS',name);}catch(e){fail++;console.error('FAIL',name,e.message);}};
+await test('verifier stays in tab storage, only challenge travels before consent',async()=>{const x=await started();const saved=JSON.parse(x.session.get(pendingKey));assert.match(saved.verifier,/^[a-f0-9]{64}$/);assert.equal(saved.ownerKey,'app:'+A);assert.equal(x.requests[0].body.browser_challenge,Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(saved.verifier))).toString('hex'));assert.ok(!JSON.stringify(x.requests).includes(saved.verifier));assert.equal(x.navigations.length,1);assert.equal(saved.returnUrl,'https://dhqfootball.com/index.html?vault=1#league');});
+await test('blocked storage prevents server request and provider navigation',async()=>{const x=fixture({quota:()=>true});await assert.rejects(x.api.startAuth(),/storage|save/);assert.equal(x.requests.length,0);assert.equal(x.navigations.length,0);});
+await test('cached user and token mismatch prevents starting or completing',async()=>{const x=fixture();x.local.set('fw_session_v1',JSON.stringify({token:token(A),user:{id:B}}));await assert.rejects(x.api.startAuth(),/Sign in/);assert.equal(x.requests.length,0);});
+await test('duplicate start and delayed account change cannot redirect',async()=>{const wait=deferred(),x=fixture({fetch:()=>wait.promise});const first=x.api.startAuth();await tick();await assert.rejects(x.api.startAuth(),/already/);x.install();wait.resolve(Response.json({flow_version:'browser-verifier-v2',state,auth_url:'https://api.login.yahoo.com/oauth2/request_auth?state='+state}));await assert.rejects(first,/account changed/);assert.equal(x.navigations.length,0);});
+await test('old server protocol and foreign consent URLs fail visibly',async()=>{for(const data of [{auth_url:'https://api.login.yahoo.com/oauth2/request_auth?state='+state},{flow_version:'browser-verifier-v2',state,auth_url:'https://evil.invalid/?state='+state}]){const x=fixture({fetch:()=>Response.json(data)});await assert.rejects(x.api.startAuth(),/updated app/);assert.equal(x.navigations.length,0);}});
+await test('same-tab reload completes once, confirms storage and restores original hash',async()=>{const x=returned(await started());assert.equal(await x.api.handleCallback(),sessionId);assert.equal(x.session.get('yahoo_session_id'),sessionId);assert.equal(x.context.location.hash,'#league');assert.equal(x.requests[0].body.action,'complete_auth');assert.equal(x.context.__DHQ_YAHOO_CALLBACK,undefined);assert.equal(x.session.has(pendingKey),false);await assert.rejects(x.api.handleCallback(),/restarted/);assert.equal(x.requests.length,1);});
+await test('transferred callback lacks initiating tab proof even with same account',async()=>{const original=await started();for(const local of [original.local,new Map([['fw_session_v1',account(B)]])]){const recipient=fixture({local});recipient.context.__DHQ_YAHOO_CALLBACK={state,code:'victim-code'};await assert.rejects(recipient.api.handleCallback(),/tab and account/);assert.equal(recipient.requests.length,0);assert.equal(recipient.session.has('yahoo_session_id'),false);}});
+await test('wrong state, account, session version, expiry and path do not send code',async()=>{for(const mode of ['state','account','version','expiry','path','query']){const original=await started(),x=returned(original);if(mode==='state')x.context.__DHQ_YAHOO_CALLBACK.state='f'.repeat(64);if(mode==='account')x.install();if(mode==='version')x.install(A,2);if(mode==='expiry'){const p=JSON.parse(x.session.get(pendingKey));p.createdAt=0;x.session.set(pendingKey,JSON.stringify(p));}if(mode==='path')x.setUrl('https://dhqfootball.com/other.html?vault=1');if(mode==='query')x.setUrl('https://dhqfootball.com/index.html?other=1');await assert.rejects(x.api.handleCallback(),/tab and account|app page/);assert.equal(x.requests.length,0);}});
+await test('provider denial clears pending proof without exchange',async()=>{const x=returned(await started());x.context.__DHQ_YAHOO_CALLBACK.error='not_approved';await assert.rejects(x.api.handleCallback(),/not approved/);assert.equal(x.requests.length,0);assert.equal(x.session.has(pendingKey),false);});
+await test('late completion cannot install connection in a different account',async()=>{const wait=deferred(),x=returned(await started(),{fetch:()=>wait.promise});const result=x.api.handleCallback();await tick();x.install();wait.resolve(Response.json({flow_version:'browser-verifier-v2',session_id:sessionId}));await assert.rejects(result,/account changed/);assert.equal(x.session.has('yahoo_session_id'),false);});
+await test('storage event invalidates a completion even if token text is unchanged',async()=>{const wait=deferred(),x=returned(await started(),{fetch:()=>wait.promise});const result=x.api.handleCallback();await tick();x.storageEvent();wait.resolve(Response.json({flow_version:'browser-verifier-v2',session_id:sessionId}));await assert.rejects(result,/account changed/);assert.equal(x.session.has('yahoo_session_id'),false);});
+await test('quota failure cannot claim saved connection',async()=>{const x=returned(await started(),{quota:k=>k==='yahoo_session_id'});await assert.rejects(x.api.handleCallback(),/could not be saved/);assert.equal(x.session.has('yahoo_session_id'),false);});
+await test('timeout does not replay or install late completion; old session remains',async()=>{const wait=deferred(),x=returned(await started(),{fastTimeout:true,fetch:()=>wait.promise});x.session.set('yahoo_session_id','existing');await assert.rejects(x.api.handleCallback(),/not confirmed/);wait.resolve(Response.json({flow_version:'browser-verifier-v2',session_id:sessionId}));await tick();assert.equal(x.session.get('yahoo_session_id'),'existing');assert.equal(x.requests.length,1);assert.equal(x.session.has(pendingKey),false);});
+await test('existing saved Yahoo API session is retained',async()=>{const x=fixture({fetch:body=>Response.json({session:body.session_id})});x.session.set('yahoo_session_id','existing');assert.equal(x.api.hasSession(),true);assert.deepEqual(await x.api.apiRequest('/users'),{session:'existing'});assert.equal(x.requests[0].body.action,'api');});
+console.log(`Yahoo browser proof: ${pass} passed, ${fail} failed`);if(fail)process.exitCode=1;}
+if(require.main===module)run().catch(e=>{console.error(e);process.exitCode=1;});
+module.exports={fixture,started,returned,account,A,B,state,sessionId,run};

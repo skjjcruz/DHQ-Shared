@@ -1,0 +1,27 @@
+{
+  "modules": [
+    "storage.js",
+    "dhq-core.js",
+    "pick-value-model.js",
+    "dhq-providers.js",
+    "points-ledger.js",
+    "one-brain.js",
+    "dhq-engine.js",
+    "intelligence-context.js",
+    "team-assess.js"
+  ],
+  "viewport": "390x844",
+  "checks": [
+    "explicit background context preserves active bridge",
+    "foreground values and actual one-brain",
+    "actual IndexedDB reload and matching cache adoption",
+    "real cross-tab account change cancels held cold work",
+    "same-view new-account retry succeeds",
+    "explicit assessment uses returned league values while active LI is empty",
+    "assessment caller guard rejects replaced account"
+  ],
+  "externalWrites": 0,
+  "pageErrors": [],
+  "requests": 99,
+  "scope": "canonical modules in fixture shell; public product caller integration remains separate"
+}

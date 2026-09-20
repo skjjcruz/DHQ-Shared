@@ -1,0 +1,14 @@
+(node:10386) Warning: `--localstorage-file` was provided without a valid path
+(Use `node --trace-warnings ...` to show where the warning was created)
+PASS actualYahooRetryGuardRejectsLaterAccountWithoutRequest
+PASS actualMapperToTickerOnlyPresentsExecutedHistory
+PASS actualTradeCenterReceivesAndSendsMappedAssets
+PASS pendingRowsCannotPassAnExecutedFeedBoundary
+PASS unavailableIsPublishedWithoutForeignHistory
+PASS readyStaleAndConfirmedEmptyKeepDifferentMeaning
+PASS wrongMissingOrMalformedMetadataCannotPublishRows
+PASS nonEspnHistoryAndRowsRemainCompatible
+PASS actualStatusUiNeverCallsOutageEmpty
+PASS actualRecoveryLoaderSkipsUnrelatedPrivateFollowups
+PASS retryIsSingleFlightAndCannotStartForAnotherAccount
+11 actual Yahoo transaction caller/UI groups; 0 failed

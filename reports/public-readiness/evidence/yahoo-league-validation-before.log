@@ -1,0 +1,34 @@
+FAIL selected key variants must agree before any network Missing expected rejection.
+FAIL selected season disagreement is not silently coerced Missing expected rejection.
+FAIL invalid key cannot become a provider query Missing expected rejection.
+FAIL foreign league metadata is rejected for every required response Missing expected rejection.
+FAIL missing season is not replaced with the current date Missing expected rejection.
+FAIL different provider year is rejected against selected season Missing expected rejection.
+FAIL parallel league parts cannot mix years when selection omitted season Missing expected rejection.
+FAIL missing metadata or resource body cannot produce default league Missing expected rejection.
+FAIL missing name, count or settings never invents a ten-team league Missing expected rejection.
+FAIL unrelated or partial settings cannot map to empty scoring and positions Missing expected rejection.
+FAIL empty or unusable player row cannot map to an empty roster Missing expected rejection.
+FAIL populated roster with split Yahoo metadata maps every confirmed player Expected values to be strictly deep-equal:
++ actual - expected
+
++ []
+- [
+-   'yahoo_123'
+- ]
+
+FAIL short or duplicate team collection is incomplete Missing expected rejection.
+FAIL foreign team or inconsistent roster membership cannot publish Missing expected rejection.
+FAIL missing or truncated roster player collection is not an empty roster Missing expected rejection.
+FAIL foreign transaction identity is not swallowed as optional outage Missing expected rejection.
+FAIL invalid bundle is not cached and a valid retry fetches all required data Missing expected rejection.
+FAIL cached data must still match a subsequent selected season Missing expected rejection.
+PASS confirmed historical season and documented explicit empty predraft rosters remain usable
+FAIL documented NFL alias resolves to authenticated canonical game before fetching Expected values to be strictly equal:
++ actual - expected
+
++ '/league/nfl.l.12345/settings?format=json'
+- '/game/nfl?format=json'
+
+FAIL NFL alias rejects unconfirmed game or a foreign season before league reads Missing expected rejection.
+Yahoo league validation: 1 passed, 20 failed

@@ -1,0 +1,72 @@
+PASS completedDynastyKeepsAcceptedHorizon
+PASS seasonalCapitalIsOnlyUnspentCurrentYear
+PASS canonicalOverridesAndBlankFieldsRetainNumericZero
+PASS unrelatedGlobalDraftCannotRetireCurrentRights
+PASS partialDraftConsumesOriginalSlotAfterTransfer
+PASS unavailableProgressIsNotFullCapitalOrDeficit
+PASS failedOwnershipIsUnavailableRatherThanOriginalInventory
+PASS roundEvidenceDistinguishesStartupFromFutureRookieDrafts
+PASS mixedIdentifiersAndDuplicateRowsDoNotInventRights
+PASS sameCountTradeAndDraftProgressInvalidateMemoAndPin
+PASS equivalentProviderOrderingKeepsTheStableAssessment
+PASS lateCloudPinCannotReplaceAnotherLeagueOrPickState
+PASS currentGlobalSeasonIsUsedOnlyForTheSelectedLeague
+PASS mflPartialBoardUsesCurrentSlotOwner
+FAIL mflTruncatedGappedAndForeignBoardsStayUnavailable: [{"round":1,"draft_slot":1,"roster_id":1,"player_id":"rookie"},{"round":1,"draft_slot":2,"roster_id":2,"player_id":""}]
+
+true !== false
+
+FAIL mflAdapterInferredDimensionsCannotCertifyTheirOwnPayload: four configured rounds cannot be certified by inferred one-round payload
+
+true !== false
+
+FAIL sleeperMissingSlotMapDuplicateAndForeignProgressStayUnavailable: {"slot_to_roster_id":{"1":1},"picks":[{"draft_id":"draft-a","round":1,"draft_slot":1,"roster_id":2,"player_id":"rookie"}]}
+
+true !== false
+
+FAIL mflBoardEvidenceRecoveryInvalidatesSavedAssessment: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   draftRounds: 4,
++   idealTotal: 9,
++   pickCountByRound: {
++     '1': 3,
++     '2': 2,
++     '3': 2,
++     '4': 2
++   },
++   pickCountByYear: {
++     '2026': 1,
++     '2027': 4,
++     '2028': 4
++   },
++   pickCountByYearRound: {
++     '2026': {
++       '1': 1
++     },
++     '2027': {
++       '1': 1,
++       '2': 1,
++       '3': 1,
++       '4': 1
++     },
++     '2028': {
++       '1': 1,
++       '2': 1,
++       '3': 1,
++       '4': 1
++     }
++   },
++   pickYears: [
++     '2026',
++     '2027',
++     '2028'
++   ],
++   roundsMissing: 0,
++   status: 'ok',
++   totalPicks: 9
++ }
+- null
+
+PASS nonPickHealthRankAndInjuryContractsAreStable

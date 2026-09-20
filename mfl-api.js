@@ -119,6 +119,135 @@ let _crosswalkYear = null;
 
 // ── Fetch helpers ─────────────────────────────────────────────────
 
+// Every transport and assembled response belongs to its initiating app account,
+// connection and selected view. Client checks establish consistency only.
+const MFL_BOUNDARY_KEYS = ['fw_session_v1', 'od_session_v1', 'od_auth_v1', 'wr_guest_v1',
+  'mfl_league_id', 'mfl_year', 'mfl_franchise_id', 'mfl_api_key', 'mfl_connection_owner_v1'];
+const MFL_TAB_KEYS = ['mfl_api_key', 'mfl_api_key_context_v1', 'mfl_guest_owner_v1'];
+let _mflEpoch = 0;
+window.addEventListener?.('storage', event => {
+  if (!event.key || MFL_BOUNDARY_KEYS.includes(event.key) || event.key.startsWith('mfl_connection_v2:') || event.key.startsWith('mfl_creds_') || /^sb-.*-auth-token/.test(event.key)) _mflEpoch++;
+});
+function _mflSelection(leagueId, year) {
+  const id = String(leagueId ?? '').trim().replace(/#.*$/, '');
+  const season = String(year ?? '').trim();
+  if (!/^\d+$/.test(id) || !/[1-9]/.test(id) || !/^(19|20|21)\d{2}$/.test(season)) throw new Error('Select the exact MFL league ID and season before loading it.');
+  return { id, year: season, key: 'mfl_' + id + '_' + season };
+}
+function _mflContext(leagueKey, options = {}) {
+  const owner = _mflOwner();
+  const keys = [...MFL_BOUNDARY_KEYS, ...(leagueKey ? ['mfl_creds_' + leagueKey, _mflOwnedKey(owner, leagueKey)] : []), _mflPointerKey(owner)];
+  const read = () => [...keys.map(key => localStorage.getItem(key)), ...MFL_TAB_KEYS.map(key => sessionStorage.getItem(key))];
+  let values, observedToken, token;
+  try {
+    values = read(); observedToken = window.OD?.getSessionToken?.() || null; token = observedToken;
+    if (values[0] !== null) {
+      const record = JSON.parse(values[0]), parts = String(record?.token || '').split('.');
+      const claims = JSON.parse(window.atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (parts.length !== 3 || typeof record.user?.id !== 'string' || !record.user.id || claims.sub !== record.user.id
+          || claims.app_metadata?.user_id !== record.user.id || !Number.isFinite(claims.exp) || claims.exp * 1000 <= Date.now()
+          || (observedToken && observedToken !== record.token)) throw new Error('identity');
+      token = record.token;
+    }
+  } catch (_) { throw new Error('Your app session is incomplete or unavailable. Sign in again before loading MFL.'); }
+  const epoch = _mflEpoch;
+  let active = true;
+  const scope = { token, signature: JSON.stringify([values, observedToken]),
+    timeoutMs: Number.isFinite(options.timeoutMs) && options.timeoutMs > 0 ? Math.min(options.timeoutMs, 20000) : 20000,
+    assertCurrent() {
+      try {
+        if (!active || epoch !== _mflEpoch || !read().every((value, i) => value === values[i])
+            || (window.OD?.getSessionToken?.() || null) !== observedToken
+            || (typeof options.isCurrent === 'function' && !options.isCurrent())) throw new Error('changed');
+      } catch (_) { active = false; throw new Error('Your account, MFL connection or selected view changed. Reopen it before continuing.'); }
+    },
+  };
+  scope.assertCurrent();
+  return scope;
+}
+// Stable local ownership is checked separately from request freshness. A new
+// session must never adopt old private connector credentials merely by loading.
+function _mflOwner(createGuest = false) {
+  const modern = localStorage.getItem('fw_session_v1');
+  if (modern !== null) {
+    try {
+      const record = JSON.parse(modern), parts = String(record?.token || '').split('.');
+      const claims = JSON.parse(window.atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      const token = window.OD?.getSessionToken?.();
+      if (parts.length !== 3 || typeof record.user?.id !== 'string' || !record.user.id || claims.sub !== record.user.id
+          || claims.app_metadata?.user_id !== record.user.id || !Number.isFinite(claims.exp) || claims.exp * 1000 <= Date.now()
+          || (token && token !== record.token)) throw new Error('invalid');
+      return 'app:' + record.user.id;
+    } catch (_) { throw new Error('Your app session is incomplete or unavailable. Sign in again before loading MFL.'); }
+  }
+  const token = window.OD?.getSessionToken?.();
+  if (token) {
+    try {
+      const parts = String(token).split('.');
+      const claims = JSON.parse(window.atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      if (parts.length !== 3 || typeof claims.sub !== 'string' || !claims.sub || !Number.isFinite(claims.exp) || claims.exp * 1000 <= Date.now()
+          || (claims.app_metadata?.user_id && claims.app_metadata.user_id !== claims.sub)) throw new Error('invalid');
+      return claims.app_metadata?.user_id ? 'app:' + claims.app_metadata.user_id : 'legacy:' + claims.sub;
+    } catch (_) { throw new Error('Your app session is incomplete. Sign in again before loading MFL.'); }
+  }
+  let guest = sessionStorage.getItem('mfl_guest_owner_v1');
+  if (!guest && createGuest) {
+    guest = window.crypto.randomUUID();
+    sessionStorage.setItem('mfl_guest_owner_v1', guest);
+    if (sessionStorage.getItem('mfl_guest_owner_v1') !== guest) throw new Error('The guest MFL connection could not be saved.');
+  }
+  return guest ? 'guest:' + guest : null;
+}
+function _mflOwnedKey(owner, leagueKey) { return 'mfl_creds_v2:' + encodeURIComponent(owner || '') + ':' + leagueKey; }
+function _mflPointerKey(owner) { return 'mfl_connection_v2:' + encodeURIComponent(owner || ''); }
+function _mflRequireOwner(owner) {
+  const current = _mflOwner();
+  if (!current || !owner || owner !== current) throw new Error('This saved MFL connection belongs to another or unknown account. Reconnect it for the current account.');
+  return current;
+}
+const _mflRawContexts = new WeakMap();
+const _mflList = value => Array.isArray(value) ? value : value && typeof value === 'object' ? [value] : null;
+function _mflIdentity(part, selected) {
+  if (!part || typeof part !== 'object' || Array.isArray(part) || part.error) throw new Error('MFL did not return complete league data.');
+  for (const field of ['leagueId', 'league_id', 'leagueID']) if (part[field] != null && String(part[field]) !== selected.id) throw new Error('MFL returned another league.');
+  for (const field of ['year', 'season', 'seasonId']) if (part[field] != null && String(part[field]) !== selected.year) throw new Error('MFL returned another season.');
+}
+function _validateMflPlayers(data) {
+  const list = _mflList(data?.players?.player);
+  if (data?.error || !list?.length || list.some(player => !/^\d+$/.test(String(player?.id ?? ''))
+      || typeof player.name !== 'string' || !player.name.trim() || typeof player.position !== 'string' || !player.position.trim())
+      || new Set(list.map(player => String(player.id))).size !== list.length) throw new Error('MFL did not return a complete player directory. Retry loading this season.');
+  return data;
+}
+function _validateMflRaw(raw, leagueId, year) {
+  const selected = _mflSelection(leagueId, year), provenance = raw && _mflRawContexts.get(raw);
+  if (provenance) {
+    provenance.scope.assertCurrent();
+    if (provenance.key !== selected.key) throw new Error('MFL data does not match the selected league and season.');
+  }
+  const lg = raw?.leagueData?.league, rosters = raw?.rostersData?.rosters;
+  _mflIdentity(lg, selected); _mflIdentity(rosters, selected);
+  if (lg.id != null && String(lg.id) !== selected.id) throw new Error('MFL returned another league.');
+  const franchises = _mflList(lg.franchises?.franchise), rosterRows = _mflList(rosters.franchise);
+  const positions = _mflList(lg.starters?.position);
+  if (typeof lg.name !== 'string' || !lg.name.trim() || !franchises?.length || !rosterRows || !positions?.length
+      || !Number.isInteger(Number(lg.rosterSize ?? lg.roster_size)) || Number(lg.rosterSize ?? lg.roster_size) <= 0
+      || positions.some(row => typeof row?.name !== 'string' || !row.name.trim() || !/^\d+(?:-\d+)?$/.test(String(row.count ?? row.limit ?? '')))
+      || !positions.some(row => Number.parseInt(row.count ?? row.limit, 10) > 0)
+      || franchises.some(row => !/^\d+$/.test(String(row?.id ?? '')))
+      || new Set(franchises.map(row => String(row.id))).size !== franchises.length
+      || (lg.franchises?.count != null && Number(lg.franchises.count) !== franchises.length)) throw new Error('MFL did not return complete league settings and franchises.');
+  const ids = new Set(franchises.map(row => String(row.id)));
+  if (rosterRows.length !== ids.size || new Set(rosterRows.map(row => String(row?.id))).size !== ids.size
+      || rosterRows.some(row => !ids.has(String(row?.id)) || (row.player != null && !_mflList(row.player)))) throw new Error('MFL did not return every franchise roster.');
+  _validateMflPlayers(raw.playersData);
+  const players = new Set(_mflList(raw.playersData.players.player).map(player => String(player.id)));
+  if (rosterRows.some(row => (_mflList(row.player) || []).some(player => !players.has(String(player?.id))))) throw new Error('MFL returned incomplete roster player data.');
+  _mflIdentity(raw.rulesData?.rules, selected);
+  if (!Object.keys(mapMFLSettings(raw.leagueData, selected.id, selected.year, raw.rulesData).scoring_settings).length) throw new Error('MFL scoring rules are missing or unsupported. Retry loading the league.');
+  return raw;
+}
+
 function _mflUrl(year, type, leagueId, apiKey, extra) {
   // Strip URL fragments (#) and whitespace from league ID
   const cleanId = String(leagueId).replace(/#.*$/, '').trim();
@@ -139,40 +268,29 @@ function _getProxyUrl() {
   return base ? base + '/functions/v1/mfl-proxy' : null;
 }
 
-async function _mflGet(url) {
+async function _mflGet(url, requestContext) {
+  const scope = requestContext || _mflContext();
+  scope.assertCurrent();
   const proxyUrl = _getProxyUrl();
-  const anonKey  = window.App?.CONFIG?.supabaseAnon || window.OD?.CONFIG?.supabaseAnon || window.OD?.SUPABASE_ANON || window.App?.SUPABASE_ANON;
-  const token    = window.OD?.getSessionToken?.() || null;
-
-  // Primary path: Supabase Edge Function proxy. Supabase's gateway requires
-  // an Authorization header (verify_jwt defaults to true) — pass the anon
-  // key if there's no user session, same pattern as ai-analyze.
-  if (proxyUrl && anonKey) {
-    const res = await fetch(proxyUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token || anonKey}`,
-        'apikey': anonKey,
-      },
-      body: JSON.stringify({ url }),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.error || 'MFL proxy error ' + res.status);
-    }
-    return res.json();
-  }
-
-  // Fallback: direct fetch (works on localhost or same-origin)
-  const res = await fetch(url);
-  if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
-      throw new Error('This MFL league is private. Provide your API key to connect.');
-    }
-    throw new Error('MFL API error ' + res.status + '. Check your League ID and year.');
-  }
-  return res.json();
+  const anonKey = window.App?.CONFIG?.supabaseAnon || window.OD?.CONFIG?.supabaseAnon || window.OD?.SUPABASE_ANON || window.App?.SUPABASE_ANON;
+  const controller = new AbortController();
+  let timer;
+  try {
+    return await Promise.race([
+      (async () => {
+        const res = await fetch(proxyUrl && anonKey ? proxyUrl : url, proxyUrl && anonKey ? {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + (scope.token || anonKey), apikey: anonKey },
+          body: JSON.stringify({ url }), signal: controller.signal,
+        } : { signal: controller.signal });
+        scope.assertCurrent();
+        const data = await res.json();
+        scope.assertCurrent();
+        if (!res.ok || data?.error) throw new Error(typeof data?.error === 'string' ? data.error : 'MFL request failed (' + res.status + '). Check league access and retry.');
+        return data;
+      })(),
+      new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error('MFL took too long to respond. Retry loading this league.')); }, scope.timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timer); }
 }
 
 // ── MFL players-universe cache ───────────────────────────────────
@@ -222,34 +340,39 @@ const _mflIDB = (() => {
 
 const _MFL_PLAYERS_TTL = 12 * 60 * 60 * 1000; // 12h — the player universe barely moves intraday
 const _mflPlayersMem = {};      // year → { data, ts }
-const _mflPlayersInflight = {}; // year → Promise (dedup concurrent callers within a load)
+const _mflPlayersInflight = {}; // year + initiating context → Promise
 
 // Fetch the global MFL player universe for a year, served from cache when warm.
 // The export is league-independent, so we drop L= and key the cache by year
 // only — one entry is reused across every league (and every reopen).
-async function _fetchPlayersCached(year, apiKey) {
+async function _fetchPlayersCached(year, scope) {
+  scope.assertCurrent();
   const mem = _mflPlayersMem[year];
-  if (mem && Date.now() - mem.ts < _MFL_PLAYERS_TTL) return mem.data;
-  if (_mflPlayersInflight[year]) return _mflPlayersInflight[year];
+  if (mem && Date.now() - mem.ts < _MFL_PLAYERS_TTL) return _validateMflPlayers(mem.data);
+  const inflightKey = JSON.stringify([year, scope.signature]);
+  if (_mflPlayersInflight[inflightKey]) return _mflPlayersInflight[inflightKey];
   const cacheKey = 'mfl_players_' + year;
-  _mflPlayersInflight[year] = (async () => {
+  _mflPlayersInflight[inflightKey] = (async () => {
     try {
       const cached = await _mflIDB.get(cacheKey);
+      scope.assertCurrent();
       if (cached && cached.data && Date.now() - cached.ts < _MFL_PLAYERS_TTL) {
+        _validateMflPlayers(cached.data);
         _mflPlayersMem[year] = { data: cached.data, ts: cached.ts };
         return cached.data;
       }
     } catch (e) { /* IDB unavailable — fall through to refetch */ }
-    const url = `${MFL_BASE}/${year}/export?TYPE=players&DETAILS=1&JSON=1`
-      + (apiKey ? '&APIKEY=' + encodeURIComponent(apiKey) : '');
-    const data = await _mflGet(url);
+    scope.assertCurrent();
+    const url = `${MFL_BASE}/${year}/export?TYPE=players&DETAILS=1&JSON=1`;
+    const data = _validateMflPlayers(await _mflGet(url, scope));
+    scope.assertCurrent();
     _mflPlayersMem[year] = { data, ts: Date.now() };
     // Fire-and-forget persist — never block returning data on the write.
     _mflIDB.set(cacheKey, { data, ts: Date.now() }).catch(() => {});
     return data;
   })();
-  try { return await _mflPlayersInflight[year]; }
-  finally { delete _mflPlayersInflight[year]; }
+  try { return await _mflPlayersInflight[inflightKey]; }
+  finally { delete _mflPlayersInflight[inflightKey]; }
 }
 
 /**
@@ -261,25 +384,24 @@ async function _fetchPlayersCached(year, apiKey) {
  * stash the assembled payload so the second caller reuses it (see _getStashedRaw,
  * 5-min TTL) instead of re-hitting the proxy for league/rosters/rules/draft.
  */
-async function fetchLeague(leagueId, year, apiKey) {
-  const stashed = _getStashedRaw(leagueId, year);
+async function fetchLeague(leagueId, year, apiKey, options) {
+  const selected = _mflSelection(leagueId, year);
+  leagueId = selected.id; year = selected.year;
+  const scope = options?.assertCurrent ? options : _mflContext(selected.key, options);
+  scope.assertCurrent();
+  const stashed = _getStashedRaw(leagueId, year, apiKey, scope);
   if (stashed) return stashed;
   const [leagueData, rostersData, playersData, rulesData, draftResultsData] = await Promise.all([
-    _mflGet(_mflUrl(year, 'league', leagueId, apiKey)),
-    _mflGet(_mflUrl(year, 'rosters', leagueId, apiKey)),
-    // Player universe — cached per year (the heavy ~1MB payload), not per league.
-    _fetchPlayersCached(year, apiKey),
-    // Scoring rules live in their own export — the league export has none.
-    // Non-fatal: a rules failure just leaves scoring_settings sparse.
-    _mflGet(_mflUrl(year, 'rules', leagueId, apiKey)).catch(() => null),
-    // Draft results carry the seeded board (round1DraftOrder + every slot) even
-    // before a single pick is made. We infer pre_draft|drafting|complete from it
-    // so the rookie-waiver lock and the live-draft tool both light up for MFL.
-    // Non-fatal: a draft fetch failure just means no draft signal.
-    _mflGet(_mflUrl(year, 'draftResults', leagueId, apiKey)).catch(() => null),
+    _mflGet(_mflUrl(year, 'league', leagueId, apiKey), scope),
+    _mflGet(_mflUrl(year, 'rosters', leagueId, apiKey), scope),
+    _fetchPlayersCached(year, scope),
+    _mflGet(_mflUrl(year, 'rules', leagueId, apiKey), scope),
+    _mflGet(_mflUrl(year, 'draftResults', leagueId, apiKey), scope).catch(() => { scope.assertCurrent(); return null; }),
   ]);
-  const raw = { leagueData, rostersData, playersData, rulesData, draftResultsData };
-  _stashRaw(leagueId, year, raw);
+  scope.assertCurrent();
+  const raw = _validateMflRaw({ leagueData, rostersData, playersData, rulesData, draftResultsData }, leagueId, year);
+  _mflRawContexts.set(raw, { key: selected.key, scope });
+  _stashRaw(leagueId, year, raw, apiKey);
   return raw;
 }
 
@@ -580,12 +702,15 @@ function lookupSleeperPlayerId(mflId) {
  * Fetch MFL transactions and map to Sleeper-compatible format.
  * MFL TYPE=transactions returns trades, adds, drops, IR moves.
  */
-async function fetchTransactions(leagueId, year, apiKey) {
+async function fetchTransactions(leagueId, year, apiKey, options) {
+  const selected = _mflSelection(leagueId, year);
+  leagueId = selected.id; year = selected.year;
+  const scope = options?.assertCurrent ? options : _mflContext(selected.key, options);
   try {
-    const data = await _mflGet(_mflUrl(year, 'transactions', leagueId, apiKey));
+    const data = await _mflGet(_mflUrl(year, 'transactions', leagueId, apiKey), scope);
     const txnArr = data?.transactions?.transaction || [];
     const txns = Array.isArray(txnArr) ? txnArr : [txnArr];
-    const cw = _crosswalk || {};
+    const cw = scope.crosswalk || (String(_crosswalkYear) === String(year) ? _crosswalk : null) || {};
 
     // Helper: parse comma-separated items, skip picks (FP_*, DP_*), resolve player IDs
     function _parseItems(str) {
@@ -634,6 +759,7 @@ async function fetchTransactions(leagueId, year, apiKey) {
       return { type: type.toLowerCase(), status: 'complete', created: ts, _source: 'mfl' };
     }).filter(t => t.type === 'trade' || t.type === 'free_agent' || t.type === 'waiver');
   } catch (e) {
+    scope.assertCurrent();
     console.warn('[MFL] Transaction fetch error:', e);
     return [];
   }
@@ -643,13 +769,16 @@ async function fetchTransactions(leagueId, year, apiKey) {
  * Fetch MFL draft results and map to Sleeper-compatible format.
  * Handles large drafts (100+ picks for mega-leagues).
  */
-async function fetchDraftResults(leagueId, year, apiKey) {
+async function fetchDraftResults(leagueId, year, apiKey, options) {
+  const selected = _mflSelection(leagueId, year);
+  leagueId = selected.id; year = selected.year;
+  const scope = options?.assertCurrent ? options : _mflContext(selected.key, options);
   try {
-    const data = await _mflGet(_mflUrl(year, 'draftResults', leagueId, apiKey));
+    const data = await _mflGet(_mflUrl(year, 'draftResults', leagueId, apiKey), scope);
     const units = data?.draftResults?.draftUnit;
     if (!units) return [];
     const unitArr = Array.isArray(units) ? units : [units];
-    const cw = _crosswalk || {};
+    const cw = scope.crosswalk || (String(_crosswalkYear) === String(year) ? _crosswalk : null) || {};
     const allPicks = [];
 
     unitArr.forEach(unit => {
@@ -673,6 +802,7 @@ async function fetchDraftResults(leagueId, year, apiKey) {
 
     return allPicks;
   } catch (e) {
+    scope.assertCurrent();
     console.warn('[MFL] Draft results fetch error:', e);
     return [];
   }
@@ -690,7 +820,7 @@ async function fetchDraftResults(leagueId, year, apiKey) {
  * `_slots` for rendering an upcoming/pre-draft board.
  */
 function mapDraftStatus(draftResultsRaw, leagueId, year, league, crosswalk) {
-  const cw = crosswalk || _crosswalk || {};
+  const cw = crosswalk || (String(_crosswalkYear) === String(year) ? _crosswalk : null) || {};
   const units = draftResultsRaw?.draftResults?.draftUnit;
   if (!units) return [];
   const unitArr = Array.isArray(units) ? units : [units];
@@ -782,6 +912,9 @@ function mapDraftStatus(draftResultsRaw, leagueId, year, league, crosswalk) {
       slot_to_roster_id,
       picks: made,
       _slots: slots,
+      // These dimensions describe this payload, not independently configured
+      // board coverage. Consumers must not use them to certify completeness.
+      _dimensionsInferred: true,
       on_the_clock: onClock ? onClock.roster_id : null,
       _source: 'mfl',
     };
@@ -793,11 +926,15 @@ function mapDraftStatus(draftResultsRaw, leagueId, year, league, crosswalk) {
  * status as picks land. `league`/`crosswalk` are optional (pool-type detection
  * + id resolution); falls back to the cached crosswalk.
  */
-async function fetchDraftStatus(leagueId, year, apiKey, league, crosswalk) {
+async function fetchDraftStatus(leagueId, year, apiKey, league, crosswalk, options) {
+  const selected = _mflSelection(leagueId, year);
+  leagueId = selected.id; year = selected.year;
+  const scope = options?.assertCurrent ? options : _mflContext(selected.key, options);
   try {
-    const data = await _mflGet(_mflUrl(year, 'draftResults', leagueId, apiKey));
+    const data = await _mflGet(_mflUrl(year, 'draftResults', leagueId, apiKey), scope);
     return mapDraftStatus(data, leagueId, year, league, crosswalk) || [];
   } catch (e) {
+    scope.assertCurrent();
     console.warn('[MFL] Draft status fetch error:', e);
     return [];
   }
@@ -808,10 +945,14 @@ async function fetchDraftStatus(leagueId, year, apiKey, league, crosswalk) {
 // with the pick's round/year and `originalPickFor` (the franchise it started with).
 // This is the real, post-trade pick-ownership source — far better than inferring
 // from trade transactions (which don't say which round/season/pick moved).
-async function fetchFutureDraftPicks(leagueId, year, apiKey) {
+async function fetchFutureDraftPicks(leagueId, year, apiKey, options) {
+  const selected = _mflSelection(leagueId, year);
+  leagueId = selected.id; year = selected.year;
+  const scope = options?.assertCurrent ? options : _mflContext(selected.key, options);
   try {
-    return await _mflGet(_mflUrl(year, 'futureDraftPicks', leagueId, apiKey));
+    return await _mflGet(_mflUrl(year, 'futureDraftPicks', leagueId, apiKey), scope);
   } catch (e) {
+    scope.assertCurrent();
     console.warn('[MFL] futureDraftPicks fetch error:', e);
     return null;
   }
@@ -892,7 +1033,8 @@ function mapFuturePicksByOwner(futureRaw) {
  * Map raw MFL API responses → { players, rosters, league, leagueUsers, drafts }.
  */
 function mapToSleeperState(raw, leagueId, year, crosswalk) {
-  const cw = crosswalk || _crosswalk || {};
+  _validateMflRaw(raw, leagueId, year);
+  const cw = crosswalk || (_crosswalkYear === String(year) || _crosswalkYear === Number(year) ? _crosswalk : null) || {};
   const { leagueData, rostersData, playersData, rulesData, draftResultsData } = raw;
 
   // ── League settings ──
@@ -991,71 +1133,32 @@ function mapToSleeperState(raw, leagueId, year, crosswalk) {
  * @param {string}        apiKey         Optional: MFL API key for private leagues
  * @param {string}        myFranchiseId  Optional: franchise ID (e.g. "0001") for current user
  */
-async function connectLeague(leagueId, year, apiKey, myFranchiseId) {
+async function connectLeague(leagueId, year, apiKey, myFranchiseId, options = {}) {
   const S = window.S || window.App?.S;
   if (!S) throw new Error('window.S not initialized');
-
-  // ── 1. Fetch MFL data ──
-  const raw = await fetchLeague(leagueId, year, apiKey);
-  if (!raw?.leagueData?.league) throw new Error('Invalid MFL league data. Check your League ID and year.');
-
-  // ── 2. Build player crosswalk against Sleeper player DB ──
-  const mflPlayerArr = raw.playersData?.players?.player || [];
-  const allMflPlayers = Array.isArray(mflPlayerArr) ? mflPlayerArr : [mflPlayerArr];
-  const crosswalk = buildCrosswalk(S.players || {}, allMflPlayers, year);
-
-  // ── 3. Map MFL data → Sleeper-equivalent format ──
-  const { players, rosters, league, leagueUsers, drafts } = mapToSleeperState(raw, leagueId, year, crosswalk);
-
-  // ── 4. Populate window.S ──
-  S.platform = 'mfl';
-  S.mflLeagueId = String(leagueId);
-  S.mflYear = year;
-  if (apiKey) S._mflApiKey = apiKey;
-
-  // Merge MFL players into S.players (Sleeper players already present take precedence)
-  Object.assign(S.players, players);
-
-  S.rosters = rosters;
-  S.leagueUsers = leagueUsers;
-  S.bracket = { w: [], l: [] };
-  S.matchups = {};
-  S.season = String(year);
-
-  // Fetch transactions (non-blocking — don't fail connect). Drafts already came
-  // through mapToSleeperState as status-bearing objects (incl. their made picks).
-  const txns = await fetchTransactions(leagueId, year, apiKey).catch(() => []);
-
-  // Store transactions keyed by week (consistent with Sleeper format).
-  // MFL doesn't expose which week a transaction belongs to, so we bucket
-  // every MFL transaction under the current week — that's the key the
-  // League screen (ui.js) reads via `S.transactions['w'+S.currentWeek]`.
-  const txnsByWeek = {};
-  const curWeekKey = 'w' + (S.currentWeek != null ? S.currentWeek : 0);
-  txns.forEach(t => { if (!txnsByWeek[curWeekKey]) txnsByWeek[curWeekKey] = []; txnsByWeek[curWeekKey].push(t); });
-  S.transactions = txnsByWeek;
-
-  // Real pick ownership from TYPE=futureDraftPicks (post-trade), not inferred
-  // from trade transactions.
-  const futureRaw = await fetchFutureDraftPicks(leagueId, year, apiKey).catch(() => null);
-  S.tradedPicks = mapTradedPicks(futureRaw);
-  // Complete future-pick ownership (exact years/rounds) for the Trade Center.
-  S._mflFuturePicks = mapFuturePicksByOwner(futureRaw);
-
-  // Status-bearing drafts (pre_draft/drafting/complete) so the live-draft tool
-  // and the rookie-waiver lock both engage. Empty array if no draft exists.
-  S.drafts = drafts || [];
-
-  S.leagues = [league];
-  S.currentLeagueId = league.league_id;
-
-  // ── 5. Find my roster ──
-  if (myFranchiseId) {
-    const myRoster = rosters.find(r => r.roster_id === String(myFranchiseId));
-    S.myRosterId = myRoster?.roster_id || null;
-  }
-
-  return { players, rosters, league, leagueUsers, raw };
+  const selected = _mflSelection(leagueId, year), activeLeague = S.currentLeagueId;
+  const isCurrent = () => S.currentLeagueId === activeLeague && (typeof options.isCurrent !== 'function' || options.isCurrent());
+  const scope = _mflContext(selected.key, { ...options, isCurrent });
+  const raw = await fetchLeague(selected.id, selected.year, apiKey, scope);
+  scope.assertCurrent();
+  const crosswalk = buildCrosswalk(S.players || {}, _mflList(raw.playersData.players.player), selected.year);
+  scope.crosswalk = crosswalk;
+  const mapped = mapToSleeperState(raw, selected.id, selected.year, crosswalk);
+  if (myFranchiseId && !mapped.rosters.some(row => String(row.roster_id) === String(myFranchiseId))) throw new Error('The selected MFL franchise is not in this league. Select your team again.');
+  const txns = await fetchTransactions(selected.id, selected.year, apiKey, scope);
+  scope.assertCurrent();
+  const futureRaw = await fetchFutureDraftPicks(selected.id, selected.year, apiKey, scope);
+  scope.assertCurrent();
+  const transactions = {};
+  if (txns.length) transactions.w0 = txns;
+  Object.assign(S, { platform: 'mfl', mflLeagueId: selected.id, mflYear: selected.year,
+    _mflApiKey: apiKey || null, players: { ...(S.players || {}), ...mapped.players },
+    rosters: mapped.rosters, leagueUsers: mapped.leagueUsers, bracket: { w: [], l: [] }, matchups: {},
+    season: selected.year, transactions, tradedPicks: mapTradedPicks(futureRaw),
+    _mflFuturePicks: futureRaw ? mapFuturePicksByOwner(futureRaw) : null, drafts: mapped.drafts || [],
+    leagues: [mapped.league], currentLeagueId: mapped.league.league_id,
+    myRosterId: myFranchiseId ? String(myFranchiseId) : null });
+  return { ...mapped, raw };
 }
 
 // ── PlatformProvider adapter ──────────────────────────────────────
@@ -1067,15 +1170,17 @@ async function connectLeague(leagueId, year, apiKey, myFranchiseId) {
 // Per-session cache of raw fetchLeague payloads keyed by leagueId+year
 // so that connect() → hydrate() doesn't re-fetch the same data.
 const _rawLeagueStash = {};
-function _stashRaw(leagueId, year, raw) {
-  _rawLeagueStash[leagueId + '_' + year] = { raw, ts: Date.now() };
+function _stashRaw(leagueId, year, raw, apiKey) {
+  const selected = _mflSelection(leagueId, year);
+  _rawLeagueStash[selected.key] = { raw: JSON.stringify(raw), apiKey: apiKey || null, scope: _mflContext(selected.key), ts: Date.now() };
 }
-function _getStashedRaw(leagueId, year) {
-  const entry = _rawLeagueStash[leagueId + '_' + year];
-  if (!entry) return null;
-  // Stale after 5 minutes — force a re-fetch to ensure transactions etc. are fresh
-  if (Date.now() - entry.ts > 5 * 60 * 1000) return null;
-  return entry.raw;
+function _getStashedRaw(leagueId, year, apiKey, scope) {
+  const selected = _mflSelection(leagueId, year), entry = _rawLeagueStash[selected.key];
+  if (!entry || entry.apiKey !== (apiKey || null) || entry.scope.signature !== scope.signature || Date.now() - entry.ts > 5 * 60 * 1000) return null;
+  try { entry.scope.assertCurrent(); scope.assertCurrent(); } catch (_) { return null; }
+  const raw = _validateMflRaw(JSON.parse(entry.raw), selected.id, selected.year);
+  _mflRawContexts.set(raw, { key: selected.key, scope });
+  return raw;
 }
 
 const MflProvider = {
@@ -1097,68 +1202,114 @@ const MflProvider = {
 
   // ── Credentials ─────────────────────────────────────────────────
   saveCredentials(leagueKey, creds) {
+    const selected = _mflSelection(creds?.leagueId, creds?.year);
+    const owner = _mflOwner(true);
+    if (creds._mflOwner && creds._mflOwner !== owner) throw new Error('This MFL connection belongs to another account. Reconnect it before saving.');
+    if (creds.franchiseId != null && !/^\d{1,4}$/.test(String(creds.franchiseId))) throw new Error('Select the exact MFL franchise before saving.');
+    if (leagueKey !== selected.key) throw new Error('MFL credentials do not match the selected league and season.');
+    const safeCreds = { ...creds, leagueId: selected.id, year: selected.year, _mflOwner: owner };
+    delete safeCreds.apiKey;
+    const updates = [
+      [localStorage, _mflOwnedKey(owner, leagueKey), JSON.stringify(safeCreds)],
+      [localStorage, _mflPointerKey(owner), selected.key],
+      [localStorage, 'mfl_league_id', selected.id], [localStorage, 'mfl_year', selected.year],
+      [localStorage, 'mfl_connection_owner_v1', owner],
+      [localStorage, 'mfl_franchise_id', creds.franchiseId ? String(creds.franchiseId) : null],
+      [sessionStorage, 'mfl_api_key_context_v1', creds.apiKey ? JSON.stringify({ owner, leagueKey }) : null],
+      [sessionStorage, 'mfl_api_key', creds.apiKey || null], [localStorage, 'mfl_api_key', null],
+    ];
+    const before = updates.map(([storage, key]) => storage.getItem(key));
+    let attempted = 0;
     try {
-      const safeCreds = { ...creds };
-      delete safeCreds.apiKey;
-      localStorage.setItem('mfl_creds_' + leagueKey, JSON.stringify(safeCreds));
-      // Legacy keys for backward compat until Phase 3 unification
-      if (creds.leagueId) localStorage.setItem('mfl_league_id', String(creds.leagueId));
-      if (creds.year) localStorage.setItem('mfl_year', String(creds.year));
-      if (creds.apiKey) { sessionStorage.setItem('mfl_api_key', creds.apiKey); localStorage.removeItem('mfl_api_key'); }
-    } catch (e) {}
+      for (const [storage, key, value] of updates) {
+        attempted++;
+        if (value === null) storage.removeItem(key); else storage.setItem(key, value);
+        if (storage.getItem(key) !== value) throw new Error('write failed');
+      }
+      return true;
+    } catch (_) {
+      // Synchronous transaction: restore only the keys this call attempted.
+      for (let i = attempted - 1; i >= 0; i--) {
+        try { const [storage, key] = updates[i]; if (before[i] === null) storage.removeItem(key); else storage.setItem(key, before[i]); } catch (_) { /* report failure; never claim saved */ }
+      }
+      throw new Error('MFL connection could not be saved on this device. Keep your connection details and retry.');
+    }
   },
   loadCredentials(leagueKey) {
-    try {
-      const raw = localStorage.getItem('mfl_creds_' + leagueKey);
-      if (raw) {
-        const creds = JSON.parse(raw);
-        return {
-          ...creds,
-          apiKey: sessionStorage.getItem('mfl_api_key') || localStorage.getItem('mfl_api_key') || creds.apiKey || null,
-        };
-      }
-    } catch (e) {}
-    // Legacy fallback — read the old flat keys
+    const owner = _mflOwner();
+    const raw = localStorage.getItem(_mflOwnedKey(owner, leagueKey)) ?? localStorage.getItem('mfl_creds_' + leagueKey);
+    if (raw !== null) {
+      let creds;
+      try { creds = JSON.parse(raw); } catch (_) { throw new Error('Saved MFL connection is unreadable. Reconnect this league.'); }
+      if (!creds || Array.isArray(creds) || typeof creds !== 'object') throw new Error('Saved MFL connection is incomplete. Reconnect this league.');
+      _mflRequireOwner(creds._mflOwner);
+      const selected = _mflSelection(creds.leagueId, creds.year);
+      if (selected.key !== leagueKey) throw new Error('Saved MFL connection does not match this league and season.');
+      let keyContext;
+      try { keyContext = JSON.parse(sessionStorage.getItem('mfl_api_key_context_v1') || 'null'); } catch (_) { /* unknown keys remain unused */ }
+      const keyOwned = keyContext?.owner === creds._mflOwner && keyContext?.leagueKey === selected.key;
+      return { ...creds, apiKey: keyOwned ? sessionStorage.getItem('mfl_api_key') || null : null };
+    }
     const id = localStorage.getItem('mfl_league_id');
     if (!id) return null;
-    return {
-      leagueId: id,
-      year: localStorage.getItem('mfl_year') || String(new Date().getFullYear()),
-      apiKey: sessionStorage.getItem('mfl_api_key') || localStorage.getItem('mfl_api_key') || null,
-    };
+    _mflRequireOwner(localStorage.getItem('mfl_connection_owner_v1'));
+    // New writes always include an owner-bound scoped record. Flat-only legacy
+    // data has no reliable owner or key provenance and must not be adopted.
+    throw new Error('This older MFL connection needs to be reconnected for the current account.');
+  },
+  loadConnection() {
+    const ownedPointer = localStorage.getItem(_mflPointerKey(_mflOwner()));
+    if (ownedPointer) return this.loadCredentials(ownedPointer);
+    const id = localStorage.getItem('mfl_league_id');
+    if (!id) return null;
+    _mflRequireOwner(localStorage.getItem('mfl_connection_owner_v1'));
+    const selected = _mflSelection(id, localStorage.getItem('mfl_year'));
+    return this.loadCredentials(selected.key);
+  },
+  currentOwner() { return _mflOwner(); },
+  isConnectionCurrent(connection) {
+    try { return !!connection && !!connection._mflOwner && connection._mflOwner === _mflOwner(); } catch (_) { return false; }
   },
   clearCredentials(leagueKey) {
     try {
-      localStorage.removeItem('mfl_creds_' + leagueKey);
+      const owner = _mflOwner();
+      localStorage.removeItem(_mflOwnedKey(owner, leagueKey));
+      if (localStorage.getItem(_mflPointerKey(owner)) === leagueKey) localStorage.removeItem(_mflPointerKey(owner));
+      const legacy = localStorage.getItem('mfl_creds_' + leagueKey);
+      try { if (legacy && JSON.parse(legacy)._mflOwner === owner) localStorage.removeItem('mfl_creds_' + leagueKey); } catch (_) { /* preserve unowned unreadable metadata; still clear volatile secrets */ }
       sessionStorage.removeItem('mfl_api_key');
+      sessionStorage.removeItem('mfl_api_key_context_v1');
       localStorage.removeItem('mfl_api_key');
     } catch (e) {}
   },
 
   // ── Phase 1: CONNECT ────────────────────────────────────────────
-  async connect(creds) {
+  async connect(creds, options) {
     const { leagueId, year, apiKey } = creds || {};
     if (!leagueId) throw new Error('MFL league ID required');
-    const yr = year || String(new Date().getFullYear());
-    const raw = await fetchLeague(leagueId, yr, apiKey || null);
+    const selected = _mflSelection(leagueId, year || String(new Date().getFullYear()));
+    const yr = selected.year, id = selected.id;
+    const owner = _mflOwner(true);
+    const raw = await fetchLeague(id, yr, apiKey || null, options);
     if (!raw?.leagueData?.league) {
       throw new Error('Invalid MFL league data. Check your League ID and year.');
     }
     // Cache the raw payload so hydrate() can reuse it without re-fetching
-    _stashRaw(leagueId, yr, raw);
+    // fetchLeague already saved a validated account/credential-scoped cache.
+
 
     const franchises = raw.leagueData.league.franchises?.franchise || [];
     const franchiseArr = Array.isArray(franchises) ? franchises : [franchises];
 
     return {
       leagues: [{
-        id: 'mfl_' + leagueId + '_' + yr,
+        id: selected.key,
         name: raw.leagueData.league.name || 'MFL League ' + leagueId,
         season: String(yr),
         _platform: 'mfl',
         _mfl: true,                    // legacy flag for back-compat
-        _mflLeagueId: String(leagueId),
-        _platformCreds: { leagueId: String(leagueId), year: String(yr), apiKey: apiKey || null },
+        _mflLeagueId: id,
+        _platformCreds: { leagueId: id, year: String(yr), apiKey: apiKey || null, _mflOwner: owner },
         _franchises: franchiseArr.map(f => ({
           id: f.id,
           name: f.name || ('Team ' + f.id),
@@ -1171,19 +1322,19 @@ const MflProvider = {
 
   // ── Phase 2: HYDRATE ────────────────────────────────────────────
   async hydrate(league, ctx) {
-    const creds = league._platformCreds || this.loadCredentials(league.id) || {};
-    const leagueId = creds.leagueId || league._mflLeagueId;
-    const year = creds.year || league.season || String(new Date().getFullYear());
-    const apiKey = creds.apiKey || null;
-    if (!leagueId) throw new Error('MFL league credentials missing');
-
     const context = ctx || {};
+    const match = /^mfl_(\d+)_(\d{4})$/.exec(String(league.id || league.league_id || ''));
+    const selected = _mflSelection(league._mflLeagueId || match?.[1], league.season || match?.[2]);
+    if ((match && (match[1] !== selected.id || match[2] !== selected.year))) throw new Error('MFL identifiers do not match the selected league and season.');
+    const scope = _mflContext(selected.key, context);
+    const creds = league._platformCreds || this.loadCredentials(selected.key) || {};
+    if (league._platformCreds) _mflRequireOwner(creds._mflOwner);
+    if ((creds.leagueId && _mflSelection(creds.leagueId, selected.year).id !== selected.id)
+        || (creds.year && String(creds.year) !== selected.year)) throw new Error('MFL credentials do not match the selected league and season. Reconnect this league.');
+    const leagueId = selected.id, year = selected.year, apiKey = creds.apiKey || null;
     const sleeperPlayers = context.sleeperPlayers || {};
-    const currentWeek = context.currentWeek != null ? context.currentWeek : 0;
-
-    // Reuse stashed raw payload if connect() was just called, else fetch fresh
-    const raw = _getStashedRaw(leagueId, year) || await fetchLeague(leagueId, year, apiKey);
-    if (!raw?.leagueData?.league) throw new Error('MFL league fetch returned no data');
+    const raw = await fetchLeague(leagueId, year, apiKey, scope);
+    scope.assertCurrent();
 
     const mflPlayerArr = raw.playersData?.players?.player || [];
     const allMflPlayers = Array.isArray(mflPlayerArr) ? mflPlayerArr : [mflPlayerArr];
@@ -1194,22 +1345,26 @@ const MflProvider = {
     try { localStorage.removeItem('mfl_crosswalk_' + year); } catch (e) {}
     const crosswalk = buildCrosswalk(sleeperPlayers, allMflPlayers, year);
 
+    scope.crosswalk = crosswalk;
     const mapped = mapToSleeperState(raw, leagueId, year, crosswalk);
+    if (league._mflFranchiseId && !mapped.rosters.some(row => String(row.roster_id) === String(league._mflFranchiseId))) throw new Error('The selected MFL franchise is not in this league. Select your team again.');
 
     // Fetch transactions + future draft picks (non-blocking — a private league
     // without an API key can still render rosters even if these fail). Drafts
     // already came back from mapToSleeperState as status-bearing objects.
     const [txns, futureRaw] = await Promise.all([
-      fetchTransactions(leagueId, year, apiKey).catch(e => {
+      fetchTransactions(leagueId, year, apiKey, scope).catch(e => {
+        scope.assertCurrent();
         console.warn('[MFL] transactions fetch failed:', e?.message || e);
         return [];
       }),
-      fetchFutureDraftPicks(leagueId, year, apiKey).catch(() => null),
+      fetchFutureDraftPicks(leagueId, year, apiKey, scope).catch(() => { scope.assertCurrent(); return null; }),
     ]);
 
-    // Bucket all transactions under the current week key — matches the
-    // Sleeper shape that LeagueDetail + free-agency.js + flash-brief.js read.
-    const wkKey = 'w' + currentWeek;
+    // MFL supplies timestamps but no verified NFL-week classification here.
+    // Keep history in w0 rather than claim every historical row happened now.
+    scope.assertCurrent();
+    const wkKey = 'w0'; // MFL does not supply a verified transaction week here.
     const transactionsByWeek = txns.length ? { [wkKey]: txns } : {};
 
     // Real, post-trade pick ownership from TYPE=futureDraftPicks — each entry is
@@ -1267,34 +1422,42 @@ function sleeperToMflId(pid) {
   return _reverseCrosswalk()[s] || null;
 }
 
-function _mflProxyHeaders() {
+function _mflProxyHeaders(scope) {
   const anonKey = window.App?.CONFIG?.supabaseAnon || window.OD?.CONFIG?.supabaseAnon || window.OD?.SUPABASE_ANON || window.App?.SUPABASE_ANON;
-  const token = window.OD?.getSessionToken?.() || null;
   const headers = { 'Content-Type': 'application/json' };
-  if (anonKey) { headers['Authorization'] = 'Bearer ' + (token || anonKey); headers['apikey'] = anonKey; headers._anon = anonKey; }
-  return headers;
+  if (anonKey) { headers.Authorization = 'Bearer ' + (scope.token || anonKey); headers.apikey = anonKey; }
+  return { headers, anonKey };
 }
 
-// POST a myfantasyleague.com URL through the proxy (write). Mirrors _mflGet but
-// tells the proxy to forward as POST, optionally carrying an MFL login cookie.
-async function _mflPost(url, extra) {
-  extra = extra || {};
-  const proxyUrl = _getProxyUrl();
-  const h = _mflProxyHeaders();
-  const anonKey = h._anon; delete h._anon;
-  const parse = (txt) => { try { return txt ? JSON.parse(txt) : {}; } catch (e) { return { raw: txt }; } };
-  if (proxyUrl && anonKey) {
-    const payload = { url, method: 'POST' };
-    if (extra.cookie) payload.cookie = extra.cookie;
-    const res = await fetch(proxyUrl, { method: 'POST', headers: h, body: JSON.stringify(payload) });
-    const data = parse(await res.text());
-    if (!res.ok) throw new Error((data && data.error) || 'MFL proxy error ' + res.status);
-    return data;
-  }
-  const res = await fetch(url, { method: 'POST' });
-  const data = parse(await res.text());
-  if (!res.ok) throw new Error('MFL API error ' + res.status);
-  return data;
+// A timeout after a write started has an unknown outcome: never call it a
+// confirmed failure or automatically repeat the write.
+async function _mflWriteTransport(url, extra, scope) {
+  scope.assertCurrent();
+  const proxyUrl = _getProxyUrl(), { headers, anonKey } = _mflProxyHeaders(scope);
+  if (!proxyUrl || !anonKey) throw new Error('MFL proxy unavailable. Reconnect before continuing.');
+  const controller = new AbortController();
+  let timer;
+  try {
+    return await Promise.race([
+      (async () => {
+        const res = await fetch(proxyUrl, { method: 'POST', headers,
+          body: JSON.stringify({ url, ...extra }), signal: controller.signal });
+        scope.assertCurrent();
+        const text = await res.text();
+        scope.assertCurrent();
+        let data;
+        try { data = JSON.parse(text); } catch (_) { throw new Error('MFL returned an unreadable response. Check MyFantasyLeague before retrying.'); }
+        if (!res.ok || data?.error) throw new Error(typeof data?.error === 'string' ? data.error : 'MFL did not confirm this request. Check MyFantasyLeague before retrying.');
+        return data;
+      })(),
+      new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error('MFL did not respond in time. The outcome is unknown; check MyFantasyLeague before retrying.')); }, scope.timeoutMs); }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
+const _mflLoginScopes = new Map();
+function _mflLoginHost(host) {
+  if (typeof host !== 'string' || !/^(?:api|www\d*)\.myfantasyleague\.com$/i.test(host)) throw new Error('MFL returned an unsupported login host. Reconnect before submitting a lineup.');
+  return host.toLowerCase();
 }
 
 // Log in to MFL to obtain a write-scoped session cookie. MFL's lineup import is
@@ -1306,51 +1469,51 @@ async function _mflPost(url, extra) {
 async function mflLogin(opts) {
   opts = opts || {};
   const { username, password } = opts;
-  const year = opts.year || new Date().getFullYear();
+  const year = String(opts.year || new Date().getFullYear());
+  if (!/^(19|20|21)\d{2}$/.test(year)) throw new Error('Select the MFL season before logging in.');
   if (!username || !password) throw new Error('MFL username and password are required.');
-  const proxyUrl = _getProxyUrl();
-  const h = _mflProxyHeaders();
-  const anonKey = h._anon; delete h._anon;
-  if (!proxyUrl || !anonKey) throw new Error('MFL proxy unavailable — cannot log in.');
+  const scope = _mflContext(opts.leagueId ? _mflSelection(opts.leagueId, year).key : null, opts);
   const loginUrl = `${MFL_BASE}/${year}/login?XML=1`;
   const form = 'USERNAME=' + encodeURIComponent(username) + '&PASSWORD=' + encodeURIComponent(password) + '&XML=1';
-  const res = await fetch(proxyUrl, { method: 'POST', headers: h, body: JSON.stringify({ url: loginUrl, login: true, form }) });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.error || 'MFL login proxy error ' + res.status);
-  if (!data.ok || !data.mflUserId) throw new Error(data.message || 'MFL login failed — check your username and password.');
-  return { cookie: 'MFL_USER_ID=' + data.mflUserId, host: data.host || null, mflUserId: data.mflUserId };
+  const data = await _mflWriteTransport(loginUrl, { login: true, form }, scope);
+  scope.assertCurrent();
+  if (!data?.ok || typeof data.mflUserId !== 'string' || !data.mflUserId || /[\s;]/.test(data.mflUserId)) throw new Error('MFL did not confirm login. Check your username and password.');
+  const host = _mflLoginHost(data.host), cookie = 'MFL_USER_ID=' + data.mflUserId;
+  _mflLoginScopes.set(cookie, { scope, year, host });
+  return { cookie, host, mflUserId: data.mflUserId };
 }
 
 // Submit a starting lineup to MFL.
 //   { leagueId, year, week, franchiseId, starterIds (Sleeper ids), mflByPid, apiKey }
-// FRANCHISE is sent explicitly (an MFL API key is account-scoped and may own more
+// FRANCHISE_ID is sent explicitly (an MFL API key is account-scoped and may own more
 // than one franchise, so we must name the target). mflByPid is the franchise's
 // own pid→MFL-id map (roster._mflPlayerIds) — preferred over the global crosswalk
 // reverse so we submit the exact id THIS franchise rosters.
 async function submitLineup(opts) {
   opts = opts || {};
   const { leagueId, year, week, apiKey, franchiseId, mflByPid, cookie, host } = opts;
-  if (!leagueId || !year || !week) throw new Error('Missing league, year, or week.');
+  const selected = _mflSelection(leagueId, year);
+  const scope = _mflContext(selected.key, opts);
+  if (!/^\d{1,2}$/.test(String(week)) || Number(week) < 1) throw new Error('Select a valid MFL lineup week.');
+  if (!/^\d{1,4}$/.test(String(franchiseId || '')) || !Number(franchiseId)) throw new Error('Select your exact MFL franchise before submitting a lineup.');
   if (!cookie && !apiKey) throw new Error('Connect your MFL login to push lineups (MFL requires a login cookie for lineup changes).');
-  const resolve = pid => (mflByPid && mflByPid[pid]) || sleeperToMflId(pid);
-  const ids = (opts.starterIds || []).map(resolve).filter(Boolean);
-  if (!ids.length) throw new Error('Could not map any starters to MFL player IDs.');
-  if (ids.length !== (opts.starterIds || []).length) {
-    throw new Error('Some starters could not be matched to MFL players — set this lineup on MFL directly.');
+  if (cookie && !/^MFL_USER_ID=[^\s;]+$/.test(cookie)) throw new Error('Reconnect your MFL login before submitting a lineup.');
+  const login = cookie && _mflLoginScopes.get(cookie);
+  if (login) {
+    login.scope.assertCurrent();
+    if (login.year !== selected.year || login.host !== host) throw new Error('The MFL login season or host changed. Reconnect before submitting a lineup.');
   }
-  const cleanId = String(leagueId).replace(/#.*$/, '').replace(/\D/g, '');
-  // With cookie auth, POST straight to the login-resolved shard host so there's
-  // no cross-host redirect to strip the Cookie. API-key auth uses the base host.
-  const base = (cookie && host) ? ('https://' + String(host).replace(/^https?:\/\//, '')) : MFL_BASE;
-  let url = `${base}/${year}/import?TYPE=lineup&L=${cleanId}&W=${encodeURIComponent(week)}`
-    + `&STARTERS=${ids.join(',')}&JSON=1`;
+  const resolve = pid => (mflByPid && mflByPid[pid]) || (/^mfl_\d+$/.test(String(pid)) ? String(pid).slice(4) : String(_crosswalkYear) === selected.year ? sleeperToMflId(pid) : null);
+  const starters = opts.starterIds;
+  if (!Array.isArray(starters) || !starters.length) throw new Error('Select your starting lineup before submitting it.');
+  const ids = starters.map(resolve);
+  if (ids.some(id => !/^\d+$/.test(String(id || ''))) || new Set(ids.map(String)).size !== ids.length) throw new Error('Some starters could not be uniquely matched to MFL players. Check this franchise on MyFantasyLeague.');
+  const base = cookie ? ('https://' + _mflLoginHost(host)) : MFL_BASE;
+  let url = `${base}/${selected.year}/import?TYPE=lineup&L=${selected.id}&W=${encodeURIComponent(week)}`
+    + `&STARTERS=${ids.join(',')}&JSON=1&FRANCHISE_ID=${String(franchiseId).padStart(4, '0')}`;
   if (apiKey && !cookie) url += `&APIKEY=${encodeURIComponent(apiKey)}`;
-  if (franchiseId) {
-    // MFL franchise ids are 4-char zero-padded ("0001").
-    const fid = String(franchiseId).replace(/\D/g, '').padStart(4, '0');
-    url += `&FRANCHISE=${encodeURIComponent(fid)}`;
-  }
-  const data = await _mflPost(url, { cookie });
+  const data = await _mflWriteTransport(url, { method: 'POST', ...(cookie ? { cookie } : {}) }, scope);
+  scope.assertCurrent();
   // MFL reports hard errors in { error } and the import OUTCOME in { status }.
   // Do NOT treat "no error key" as success — a soft rejection (locked/invalid
   // player, past deadline) returns HTTP 200 with a status message. Require an

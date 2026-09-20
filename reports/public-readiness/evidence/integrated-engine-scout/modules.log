@@ -1,0 +1,190 @@
+
+COMMAND node tests/engine-context-recovery.cjs
+PASS inPlacePlayerChangeRebuildsReadyDataAndCancelsPendingCommit
+PASS eachCoalescedCallerRetainsItsOwnCancellationAndDeadline
+PASS tokenProfileMismatchOrExpiryCannotAdoptAnotherOwnersCache
+PASS foregroundPreservesScoutAgeAndNameHelperSemantics
+PASS actualConsumerAnnotationAndResetPatternsRetainBoundaries
+PASS invalidLeagueSeasonAndChangedExplicitConnectionRejectBeforeFollowups
+PASS unavailableOptionalStorageCannotBreakFreshValues
+PASS hangingOptionalMarketHelperSettlesAndDoesNotPublishLate
+PASS actualLedgerAndOneBrainRemainIdenticalAndWorkAfterCacheReload
+PASS canceledLedgerCannotPoisonOrDeleteNewRetryAndSettledCacheSurvivesUnmount
+PASS boundSleeperUsesExplicitPlayersAndRejectsStaleChain
+PASS conflictingMflConnectionCannotStartPrivateRequest
+PASS unchangedOriginalEngineResultsIncludingInjuredPlayer
+PASS explicitContextReturnsValuesWithoutChangingActiveBridgeOrGlobalLI
+PASS lateCacheReadCannotAdoptNewLeague
+PASS heldOldBuildCannotPublishCacheOrFollowupAfterAccountSwitch
+PASS observedReplacementRemainsCanceledWhenAccountBytesReturn
+PASS readyValueReadersInvalidateOnAccountOrLeagueChange
+PASS sameContextCoalescesAndOlderFinallyCannotClearNewLoader
+PASS savedCacheMatchesOwnerSeasonSettingsAndNeverAdoptsUnscopedLegacy
+PASS malformedModernPresenceCannotBecomeLegacyBuild
+PASS oldOneBrainCompletionCannotReplaceCurrentAccount
+PASS timeoutSettlesAndLateResponseCannotRestartBuild
+PASS boundProviderUsesSnapshotPlayersAndStopsPrivateFollowups
+24 actual engine context groups passed.
+
+COMMAND node tests/yahoo-scout-state.cjs
+PASS legacy connect publishes confirmed feed instead of an empty placeholder
+[Yahoo] transactions fetch failed: outage
+[Yahoo] transactions fetch failed: outage
+PASS unavailable initial feed and same-context reconnect retain truthful status
+PASS unconfirmed/restored plain state cannot adopt current account history
+PASS published scope retires across account, provider, league, season and state replacement
+PASS late transaction completion cannot publish after active account changes
+Yahoo Scout state: 5 passed, 0 failed
+
+COMMAND node tests/yahoo-transactions.cjs
+[Yahoo] transactions fetch failed: controlled outage
+PASS failed first feed is unavailable, not verified empty
+PASS completed trade maps shared assets and timestamp without inventing week
+PASS mapper resolves known crosswalk IDs and keeps unmapped Yahoo IDs namespaced
+[Yahoo] transactions fetch failed: controlled outage
+PASS failed refresh preserves confirmed data and timestamp
+[Yahoo] transactions fetch failed: controlled outage
+PASS verified empty retry can replace stale confirmed rows
+[Yahoo] transactions fetch failed: controlled outage
+PASS confirmed empty failure becomes stale and preserves timestamp
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction collection is incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction type or completion status is missing.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction type or completion status is missing.
+PASS missing malformed or truncated collections never certify empty
+[Yahoo] transactions fetch failed: controlled outage
+[Yahoo] transactions fetch failed: controlled outage
+[Yahoo] transactions fetch failed: controlled outage
+PASS pending rejected and unknown states are visibly excluded from completed history
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: transaction type or completion status is missing.
+PASS missing completion status is unavailable, not filtered into empty success
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade players are incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade players are incomplete.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade ID or timestamp is invalid.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade ID or timestamp is invalid.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade ID or timestamp is invalid.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: unexpected transaction type.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade player or movement is missing.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade refers to an unconfirmed team.
+[Yahoo] transactions fetch failed: Yahoo did not return a usable completed trade feed: trade ID or timestamp is invalid.
+PASS incomplete movement, team membership, duplicates and timestamp never publish partial success
+PASS foreign league season and game fail the original identity boundary
+[Yahoo] transactions fetch failed: controlled outage
+[Yahoo] transactions fetch failed: controlled outage
+[Yahoo] transactions fetch failed: controlled outage
+PASS cache cannot cross account, provider session or observed storage generation
+[Yahoo] transactions fetch failed: outage
+[Yahoo] transactions fetch failed: outage
+PASS cache cannot cross selected league or historical season
+[Yahoo] transactions fetch failed: controlled outage
+PASS view replacement keeps same account confirmed feed without retaining dead caller closure
+PASS account or caller change during failed transaction cannot become stale publication
+[Yahoo] transactions fetch failed: Yahoo connection was not confirmed. Start a new connection from this tab.
+PASS transport timeout is unavailable and subsequent retry works
+[Yahoo] transactions fetch failed: Yahoo connection was not confirmed. Start a new connection from this tab.
+PASS body timeout is unavailable and subsequent retry works
+PASS mounted retry guard cannot adopt another account or reconnect and stays retired
+Yahoo transactions: 18 passed, 0 failed
+
+COMMAND node tests/yahoo-data-context.cjs
+PASS delayed A API data never resolves into current B
+PASS body parsing is fenced after account changes
+PASS new Yahoo session in same account invalidates a late response
+PASS hydrate account change stops follow-up transactions and raw cache
+PASS caller selection supersession stops hydration before mapping
+PASS account change during optional transactions cannot be swallowed
+PASS caller supersession during transactions prevents final publication
+PASS cached raw league cannot cross account boundary
+PASS cached raw league is invalidated by provider reconnect or same-token storage event
+PASS same context retains usable cache and ordinary mapped values
+PASS legacy connect cannot overwrite replaced active S or selected league
+PASS later legacy Yahoo connect supersedes earlier operation
+PASS legacy connect still writes confirmed current results
+[Yahoo] transactions fetch failed: provider outage
+PASS ordinary optional transaction outage preserves existing non-transaction result
+Yahoo data context: 14 passed, 0 failed
+
+COMMAND node tests/yahoo-league-validation.cjs
+PASS selected key variants must agree before any network
+PASS selected season disagreement is not silently coerced
+PASS invalid key cannot become a provider query
+PASS foreign league metadata is rejected for every required response
+PASS missing season is not replaced with the current date
+PASS different provider year is rejected against selected season
+PASS parallel league parts cannot mix years when selection omitted season
+PASS missing metadata or resource body cannot produce default league
+PASS missing name, count or settings never invents a ten-team league
+PASS unrelated or partial settings cannot map to empty scoring and positions
+PASS empty or unusable player row cannot map to an empty roster
+PASS populated roster with split Yahoo metadata maps every confirmed player
+PASS short or duplicate team collection is incomplete
+PASS foreign team or inconsistent roster membership cannot publish
+PASS missing or truncated roster player collection is not an empty roster
+PASS foreign transaction identity is not swallowed as optional outage
+PASS invalid bundle is not cached and a valid retry fetches all required data
+PASS cached data must still match a subsequent selected season
+PASS confirmed historical season and documented explicit empty predraft rosters remain usable
+PASS documented NFL alias resolves to authenticated canonical game before fetching
+PASS NFL alias rejects unconfirmed game or a foreign season before league reads
+Yahoo league validation: 21 passed, 0 failed
+
+COMMAND node tests/yahoo-browser-binding.cjs
+PASS verifier stays in tab storage, only challenge travels before consent
+PASS blocked storage prevents server request and provider navigation
+PASS cached user and token mismatch prevents starting or completing
+PASS duplicate start and delayed account change cannot redirect
+PASS old server protocol and foreign consent URLs fail visibly
+PASS same-tab reload completes once, confirms storage and restores original hash
+PASS transferred callback lacks initiating tab proof even with same account
+PASS wrong state, account, session version, expiry and path do not send code
+PASS provider denial clears pending proof without exchange
+PASS late completion cannot install connection in a different account
+PASS storage event invalidates a completion even if token text is unchanged
+PASS quota failure cannot claim saved connection
+PASS timeout does not replay or install late completion; old session remains
+PASS existing saved Yahoo API session is retained
+Yahoo browser proof: 14 passed, 0 failed
+
+COMMAND node tests/session-lifecycle.cjs
+PASS late A refresh 401 cannot clear or replace B
+PASS late A refresh 200 cannot clear or replace B
+PASS late refresh body and replaced cached user cannot publish
+PASS observed A to B to A generation invalidates old refresh
+PASS same-account concurrent refresh shares request and new token persists
+PASS token-only old OAuth app record repairs the same claimed owner
+PASS foreign owner, contradictory cached user and changed version response rejected
+PASS refresh rejects missing or contradictory token and profile entitlement fields
+PASS current revoked session clears modern and old legacy fallback only once
+PASS expired session requests no refresh and cannot expose an older legacy user
+PASS malformed modern presence never uses signed legacy fallback
+PASS transport deadline releases retry while keeping current valid account
+PASS body deadline releases retry while keeping current valid account
+PASS network rejection and HTTP 503 remain retryable within same page
+PASS refresh storage quota failure preserves confirmed old session without claiming replacement
+PASS late A profile 401 cannot publish under or delete B
+PASS late A profile 200 cannot publish under or delete B
+PASS profile parsing completion checks account again
+PASS normal profile uses renewed token and explicit server entitlements
+PASS foreign or partial profile cannot invent free tier or use legacy account
+PASS profile timeout returns no invented entitlement and permits retry
+PASS valid signed legacy profile remains available only for matching username
+PASS late legacy profile cannot publish after modern sign-in or username change
+PASS SDK adapter preserves normal provider persistence and retires old token client
+PASS SDK adapter blocks late provider refresh writes after same-tab provider switch
+PASS observed provider A to B to A never revives the retired adapter
+PASS signOut never invokes persistent SDK cleanup and late logout preserves B
+PASS local-only signout reloads and prevents pending refresh resurrection
+PASS unconfirmed provider signout is bounded and reports only local completion
+PASS unconfigured local module does not throw during provider-key setup
+PASS legacy display username cannot select another signed owner
+PASS storage inaccessible produces no identity or requests
+Shared session lifecycle: 32 passed, 0 failed
+
+COMMAND node tests/session-issuer-compatibility.cjs
+PASS actual native aa13193 app JWT issuer and session_version7 repair/renewal contract
+PASS actual native aa13193 legacy handler signed username/expiry contract and authoritative modern boundary

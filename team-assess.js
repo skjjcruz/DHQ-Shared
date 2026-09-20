@@ -128,10 +128,11 @@ window.App = window.App || {};
    * @param {Object} playerStats   - { pid: { seasonTotal, prevTotal, ... } }
    * @returns {Object}             - { pos: Set<pid> }
    */
-  function buildNflStarterSet(players, playerStats, nflStarterPool) {
+  function buildNflStarterSet(players, playerStats, nflStarterPool, valueContext) {
     const pool = nflStarterPool || buildNflStarterPool(12);
     const nflStarterSet = {};
-    const scoreMap = window.App?.LI?.playerScores || window.LI?.playerScores || null;
+    const scoreMap = valueContext ? valueContext.playerScores : (window.App?.LI?.playerScores || window.LI?.playerScores || null);
+    const valueFor = valueContext ? valueContext.valueFor : getDynastyValue;
     const sourceIds = scoreMap ? Object.keys(scoreMap) : Object.keys(players || {});
     // Single pass over the source list, bucketing by position — was 9 full scans
     // (one per DEPTH_POSITION), each re-walking the whole ~2k-12k list and re-
@@ -144,7 +145,7 @@ window.App = window.App || {};
       const bucket = byPos[normPos(p.position)];
       if (!bucket) continue;       // not a depth position we track
       // Prefer dynasty value; fall back to season stats
-      const val = scoreMap?.[pid] || getDynastyValue(pid);
+      const val = scoreMap?.[pid] || valueFor(pid);
       const pts = val > 0 ? val : (playerStats?.[pid]?.seasonTotal || playerStats?.[pid]?.prevTotal || 0);
       if (pts > 0) bucket.push({ pid, pts });
     }
@@ -245,12 +246,66 @@ window.App = window.App || {};
    * never read as complete, and every() so a rookie+supplemental pair doesn't
    * drop the year while one is still pending.
    */
+  const pickLeagueId = league => String(league?.league_id ?? league?.id ?? '');
+  const pickStatus = value => String(value || '').trim().toLowerCase();
+  const pickInteger = value => value !== '' && value != null && Number.isInteger(Number(value)) ? Number(value) : null;
+
+  function pickFormat(league) {
+    const detected = window.App?.Intelligence?.detectLeagueType?.(league);
+    if (detected && detected !== 'unknown') return detected;
+    let override = league?._dhq_type_override;
+    try { override = override || window.localStorage?.getItem('dhq_league_type_override:' + pickLeagueId(league)); } catch (e) {}
+    const raw = [override, league?.type, league?.league_type, league?.settings?.type,
+      league?.metadata?.type, league?.metadata?.league_type].find(v => v != null && String(v).trim() !== '');
+    const type = pickStatus(raw);
+    if (type) return ({ 0: 'redraft', 1: 'keeper', 2: 'dynasty', re_draft: 'redraft', season_long: 'redraft', bestball: 'best_ball' })[type] || type;
+    return Number(league?.settings?.max_keepers || league?.settings?.keeper_count || league?.metadata?.keeper_count) > 0 ? 'keeper' : 'unknown';
+  }
+
+  function pickLeagueFromGlobal() {
+    const state = window.S || window.App?.S || {};
+    const league = state.leagues?.find(l => pickLeagueId(l) === String(state.currentLeagueId || ''));
+    return league ? { ...league, season: league.season || state.season } : null;
+  }
+
+  function leagueDrafts(league) {
+    const lid = pickLeagueId(league);
+    const state = window.S || window.App?.S || {};
+    const ownedGlobal = lid && String(state.currentLeagueId || '') === lid
+      && (!state.draftsLeagueId || String(state.draftsLeagueId) === lid);
+    const rows = Array.isArray(league?.drafts) ? league.drafts : ownedGlobal && Array.isArray(state.drafts) ? state.drafts : [];
+    return rows.filter(d => d && (!d.league_id || (lid && String(d.league_id) === lid)));
+  }
+
   function seasonDraftComplete(leagueInfo, curYear) {
-    const fromLeague = Array.isArray(leagueInfo?.drafts) ? leagueInfo.drafts : null;
-    const globalS = (typeof S !== 'undefined' && S) || (typeof window !== 'undefined' && window.S) || null;
-    const drafts = fromLeague || (Array.isArray(globalS?.drafts) ? globalS.drafts : []);
-    const seasonDrafts = drafts.filter(d => parseInt(d?.season) === curYear);
-    return seasonDrafts.length > 0 && seasonDrafts.every(d => String(d?.status || '').toLowerCase() === 'complete');
+    const seasonDrafts = leagueDrafts(leagueInfo).filter(d => pickInteger(d.season) === curYear);
+    return seasonDrafts.length > 0 && seasonDrafts.every(d => pickStatus(d.status) === 'complete'
+      && (d._source !== 'mfl' || (mflBoardComplete(d, leagueInfo) && d._slots.every(p => String(p.player_id || '').trim()))));
+  }
+
+  function currentDraftRounds(draft, league) {
+    // The MFL adapter derives dimensions from the returned rows. A truncated
+    // response cannot certify its own length; require separate configuration.
+    return pickInteger(draft?._dimensionsInferred ? league?.settings?.draft_rounds
+      : draft?.settings?.rounds) ?? (draft?._dimensionsInferred ? null : pickInteger(league?.settings?.draft_rounds));
+  }
+
+  function mflBoardComplete(draft, league) {
+    const rounds = currentDraftRounds(draft, league);
+    const teams = pickInteger(draft?._dimensionsInferred ? league?.total_rosters : draft?.settings?.teams)
+      ?? pickInteger(league?.total_rosters);
+    if (!rounds || rounds > 100 || !teams || teams < 1 || !Array.isArray(draft?._slots)
+      || draft._slots.length !== rounds * teams) return false;
+    const seen = new Set();
+    return draft._slots.every(p => {
+      const round = pickInteger(p?.round), slot = pickInteger(p?.draft_slot);
+      const key = round + '|' + slot;
+      if (!p || !round || round < 1 || round > rounds || !slot || slot < 1 || slot > teams || seen.has(key)
+        || !String(p.roster_id ?? '').trim() || typeof p.player_id !== 'string'
+        || (p.draft_id && String(p.draft_id) !== String(draft.draft_id))
+        || (p.league_id && String(p.league_id) !== pickLeagueId(league))) return false;
+      seen.add(key); return true;
+    });
   }
 
   /**
@@ -259,8 +314,37 @@ window.App = window.App || {};
    * 2026 draft completes: 2027/2028/2029 instead of 2026/2027/2028).
    */
   function tradeablePickYears(leagueInfo, curYear) {
-    const start = curYear + (seasonDraftComplete(leagueInfo, curYear) ? 1 : 0);
-    return Array.from({ length: PICK_HORIZON }, (_, i) => start + i);
+    const format = pickFormat(leagueInfo);
+    const complete = seasonDraftComplete(leagueInfo, curYear);
+    if (format === 'dynasty') return Array.from({ length: PICK_HORIZON }, (_, i) => curYear + (complete ? 1 : 0) + i);
+    if (['redraft', 'keeper', 'best_ball', 'dfs'].includes(format)) return complete ? [] : [curYear];
+    return [];
+  }
+
+  function pickContext(league) {
+    const season = pickInteger(league?.season);
+    const rounds = pickInteger(league?.settings?.draft_rounds);
+    const years = season ? tradeablePickYears(league, season) : [];
+    const drafts = leagueDrafts(league).filter(d => pickInteger(d.season) === season);
+    const currentRounds = drafts.length === 1 ? currentDraftRounds(drafts[0], league) : rounds;
+    const roundsByYear = Object.fromEntries(years.map(year => [year, year === season ? currentRounds : rounds]));
+    return { season, rounds, roundsByYear, years, drafts, format: pickFormat(league) };
+  }
+
+  function pickInputFingerprint(league, tradedPicks) {
+    const c = pickContext(league);
+    // Same-length ownership transfers, consumed slots, loading/error recovery,
+    // and format overrides all change capital without changing any roster.
+    const canonicalRows = rows => rows.map(row => JSON.stringify(row)).sort();
+    const slots = rows => Array.isArray(rows) ? canonicalRows(rows.map(p => [String(p?.draft_id || ''), String(p?.league_id || ''),
+      pickInteger(p?.round), pickInteger(p?.draft_slot), String(p?.roster_id ?? ''), typeof p?.player_id, String(p?.player_id || '')])) : null;
+    const lid = pickLeagueId(league);
+    return JSON.stringify([lid, c.format, c.season, c.rounds, pickInteger(league?.total_rosters), pickStatus(league?.status),
+      canonicalRows(c.drafts.map(d => [String(d.draft_id || ''), String(d.league_id || ''), d.season, pickStatus(d.status),
+        pickInteger(d.settings?.rounds), pickInteger(d.settings?.teams), d._source, !!d._dimensionsInferred,
+        canonicalRows(Object.entries(d.slot_to_roster_id || {}).map(([slot, rid]) => [pickInteger(slot), String(rid)])), slots(d.picks), slots(d._slots)])),
+      Array.isArray(tradedPicks) ? canonicalRows(tradedPicks.filter(p => !p?.league_id || String(p.league_id) === lid)
+        .map(p => [pickInteger(p?.season), pickInteger(p?.round), String(p?.roster_id ?? ''), String(p?.owner_id ?? '')])) : null]);
   }
 
   /**
@@ -271,51 +355,109 @@ window.App = window.App || {};
    * @returns {Object}           - { rosterId: [{year, round, originalOwnerRid}] }
    */
   function buildPicksByOwner(rosters, leagueInfo, tradedPicks) {
-    const draftRounds = leagueInfo?.settings?.draft_rounds || DRAFT_ROUNDS;
-    const curYear = parseInt(leagueInfo?.season) || new Date().getFullYear();
-    const years = tradeablePickYears(leagueInfo, curYear);
-    const allTP = tradedPicks || [];
+    const context = pickContext(leagueInfo);
+    const { season: curYear, roundsByYear, years, drafts } = context;
+    const draftRounds = Math.max(0, ...Object.values(roundsByYear).filter(Number.isInteger));
+    const lid = pickLeagueId(leagueInfo);
+    const rows = (rosters || []).filter(r => !r.league_id || (lid && String(r.league_id) === lid));
+    const rosterIds = new Set(rows.map(r => String(r.roster_id)));
+    const coverage = { complete: true, reason: null, format: context.format, years, draftRounds, roundsByYear };
+    const unknown = reason => { coverage.complete = false; coverage.reason = coverage.reason || reason; };
+    if (!curYear || Object.values(roundsByYear).some(rounds => !Number.isInteger(rounds) || rounds < 0 || rounds > 100)) unknown('Draft season or rounds are unavailable.');
+    if (!['dynasty', 'redraft', 'keeper', 'best_ball', 'dfs'].includes(context.format)) unknown('League format is unavailable.');
+    if (!Array.isArray(tradedPicks)) unknown('Pick ownership has not loaded.');
+    if (drafts.some(d => d._source === 'mfl' && (!mflBoardComplete(d, leagueInfo)
+      || d._slots.some(p => !rosterIds.has(String(p.roster_id)))))) unknown('The complete MFL draft board has not been established.');
     const result = {};
-
-    // Index traded picks ONCE instead of scanning allTP with .find + .filter for
-    // every (roster × year × round) cell. A pick only matters when it changed
-    // hands (owner_id !== roster_id) — that single guard feeds both lookups:
-    //   awayKeys:     season|round|roster_id  → this owner dealt the pick away
-    //   acquiredByKey season|round|owner_id   → [originalOwnerRid, ...] acquired
-    // Rounds are matched strictly (=== a number) just as before, so non-numeric
-    // rounds (which the old === never matched) are skipped here too.
-    const awayKeys = new Set();
-    const acquiredByKey = new Map();
-    for (const p of allTP) {
-      if (p.owner_id === p.roster_id) continue;
-      if (typeof p.round !== 'number') continue;
-      const season = parseInt(p.season);
-      awayKeys.add(season + '|' + p.round + '|' + p.roster_id);
-      const k = season + '|' + p.round + '|' + p.owner_id;
-      let list = acquiredByKey.get(k);
-      if (!list) { list = []; acquiredByKey.set(k, list); }
-      list.push(p.roster_id);
-    }
-
-    (rosters || []).forEach(r => {
-      const rid = r.roster_id;
-      result[rid] = [];
-      years.forEach(yr => {
-        for (let rd = 1; rd <= draftRounds; rd++) {
-          // Own original pick — unless it was dealt away
-          if (!awayKeys.has(yr + '|' + rd + '|' + rid)) {
-            result[rid].push({ year: yr, round: rd, originalOwnerRid: rid });
-          }
-          // Acquired picks for this slot
-          const acq = acquiredByKey.get(yr + '|' + rd + '|' + rid);
-          if (acq) {
-            for (const originalOwnerRid of acq) {
-              result[rid].push({ year: yr, round: rd, originalOwnerRid });
-            }
-          }
-        }
-      });
+    rows.forEach(r => { result[r.roster_id] = []; });
+    // Preserve the public roster→array shape. Non-enumerable coverage is also
+    // attached to each array so direct assessTeam calls retain uncertainty.
+    Object.defineProperty(result, 'coverage', { value: coverage });
+    Object.values(result).forEach(picks => {
+      Object.defineProperty(picks, 'coverage', { value: coverage });
+      Object.defineProperty(picks, 'idealTotal', { value: 0, writable: true });
+      Object.defineProperty(picks, 'idealByRound', { value: {} });
     });
+    if (!coverage.complete) return result;
+
+    const owners = new Map();
+    for (const p of tradedPicks) {
+      if (p?.league_id && String(p.league_id) !== lid) continue;
+      const year = pickInteger(p?.season), round = pickInteger(p?.round);
+      if (!year) { unknown('Pick ownership contains an unresolved season.'); continue; }
+      if (!years.includes(year)) continue;
+      if (round == null || round < 1 || round > roundsByYear[year] || !rosterIds.has(String(p.roster_id)) || !rosterIds.has(String(p.owner_id))) {
+        unknown('Pick ownership contains an unresolved roster or round.'); continue;
+      }
+      const key = year + '|' + round + '|' + String(p.roster_id);
+      const owner = String(p.owner_id);
+      if (owners.has(key) && owners.get(key) !== owner) unknown('Pick ownership contains conflicting owners.');
+      owners.set(key, owner);
+    }
+    if (!coverage.complete) return result;
+
+    const consumed = new Set();
+    let currentKnown = true, currentSlots = null;
+    if (years.includes(curYear)) {
+      if (!drafts.length) {
+        currentKnown = pickStatus(leagueInfo?.status) === 'pre_draft';
+      } else if (drafts.length === 1) {
+        const draft = drafts[0], status = pickStatus(draft.status);
+        if (draft._source === 'mfl' && Array.isArray(draft._slots)) {
+          // MFL slots already name their current owner; its first-round order
+          // cannot establish original ownership after intra-round trades.
+          currentSlots = draft._slots;
+          const made = currentSlots.filter(p => String(p.player_id || '').trim()).length;
+          currentKnown = mflBoardComplete(draft, leagueInfo)
+            && ((status === 'pre_draft' && made === 0) || (status === 'drafting' && made > 0 && made < currentSlots.length));
+        } else if (status === 'drafting') {
+          const slotMap = Object.entries(draft.slot_to_roster_id || {});
+          const mappedOwners = new Set(slotMap.map(([, rid]) => String(rid)));
+          const mappedSlots = new Set(slotMap.map(([slot]) => pickInteger(slot)));
+          currentKnown = Array.isArray(draft.picks) && slotMap.length === rosterIds.size && mappedOwners.size === rosterIds.size
+            && mappedSlots.size === rosterIds.size
+            && slotMap.every(([slot, rid]) => pickInteger(slot) > 0 && pickInteger(slot) <= rosterIds.size && rosterIds.has(String(rid)));
+          for (const pick of draft.picks || []) {
+            if (!pick) { currentKnown = false; continue; }
+            if ((pick.draft_id && String(pick.draft_id) !== String(draft.draft_id))
+              || (pick.league_id && String(pick.league_id) !== lid)) { currentKnown = false; continue; }
+            const original = draft.slot_to_roster_id?.[pick.draft_slot];
+            const round = pickInteger(pick.round);
+            const key = curYear + '|' + round + '|' + String(original);
+            if (!rosterIds.has(String(original)) || !round || round < 1 || round > roundsByYear[curYear] || !pick.player_id
+              || (pick.roster_id != null && !rosterIds.has(String(pick.roster_id))) || consumed.has(key)) { currentKnown = false; continue; }
+            consumed.add(key);
+          }
+        } else currentKnown = status === 'pre_draft';
+      } else {
+        // Multiple draft rounds can describe rookie/supplemental rights. Do
+        // not collapse separate boards into one year/round/original-owner key.
+        currentKnown = false;
+      }
+      if (!currentKnown) unknown('Current draft progress or remaining ownership is unavailable.');
+    }
+    for (const year of years) {
+      if (year === curYear && !currentKnown) continue;
+      if (year === curYear && currentSlots) {
+        currentSlots.filter(p => !p.player_id).forEach(p => {
+          const picks = result[String(p.roster_id)];
+          picks.push({ year, round: Number(p.round), originalOwnerRid: null, slot: Number(p.draft_slot) || null });
+          picks.idealTotal++;
+          picks.idealByRound[p.round] = (picks.idealByRound[p.round] || 0) + 1;
+        });
+        continue;
+      }
+      for (const r of rows) {
+        for (let round = 1; round <= roundsByYear[year]; round++) {
+          const key = year + '|' + round + '|' + String(r.roster_id);
+          if (consumed.has(key)) continue;
+          result[r.roster_id].idealTotal++;
+          result[r.roster_id].idealByRound[round] = (result[r.roster_id].idealByRound[round] || 0) + 1;
+          const owner = owners.get(key) || String(r.roster_id);
+          result[owner].push({ year, round, originalOwnerRid: r.roster_id });
+        }
+      }
+    }
     return result;
   }
 
@@ -338,6 +480,7 @@ window.App = window.App || {};
    */
   function assessTeam(roster, players, playerStats, leagueInfo, leagueUsers, nflStarterSet, ownerPicks, allRosters, dynamicConfig) {
     const _cfg = dynamicConfig || {};
+    const valueFor = _cfg.valueFor || getDynastyValue;
     const IDEAL_ROSTER = _cfg.idealRoster || buildIdealRoster(leagueInfo?.roster_positions);
     const MIN_STARTER_QUALITY = _cfg.minStarterQuality || buildMinStarterQuality(leagueInfo?.roster_positions);
     const POS_WEIGHTS = _cfg.posWeights || buildPosWeights(leagueInfo?.roster_positions);
@@ -430,7 +573,7 @@ window.App = window.App || {};
 
       // Sort display order by dynasty value
       const sortedIds = [...playerIds]
-        .map(id => ({ id, score: getDynastyValue(id) }))
+        .map(id => ({ id, score: valueFor(id) }))
         .sort((a, b) => b.score - a.score)
         .map(p => p.id);
 
@@ -438,9 +581,9 @@ window.App = window.App || {};
     }
 
     // Draft picks assessment
-    const leagueSeason = parseInt(leagueInfo?.season || new Date().getFullYear());
-    const draftRounds  = leagueInfo?.settings?.draft_rounds || DRAFT_ROUNDS;
-    const pickYears    = tradeablePickYears(leagueInfo, leagueSeason).map(String);
+    const draftContext = pickContext(leagueInfo);
+    const draftRounds  = Math.min(100, Math.max(0, ...Object.values(draftContext.roundsByYear).filter(Number.isInteger)));
+    const pickYears    = draftContext.years.map(String);
 
     const pickCountByRound     = {};
     const pickCountByYear      = {};
@@ -449,26 +592,37 @@ window.App = window.App || {};
     for (const year of pickYears) {
       pickCountByYear[year] = 0;
       pickCountByYearRound[year] = {};
-      for (let r = 1; r <= draftRounds; r++) pickCountByYearRound[year][r] = 0;
+      for (let r = 1; r <= Math.min(100, draftContext.roundsByYear[year] || 0); r++) pickCountByYearRound[year][r] = 0;
     }
     const myPicks = ownerPicks || [];
     for (const { year, round } of myPicks) {
       const y = String(year);
       if (!pickYears.includes(y)) continue;
-      if (round < 1 || round > draftRounds) continue;
+      if (round < 1 || round > draftContext.roundsByYear[y]) continue;
       pickCountByRound[round] = (pickCountByRound[round] || 0) + 1;
       pickCountByYear[y] = (pickCountByYear[y] || 0) + 1;
       if (pickCountByYearRound[y]) pickCountByYearRound[y][round] = (pickCountByYearRound[y][round] || 0) + 1;
     }
     const totalPicks    = Object.values(pickCountByRound).reduce((a, b) => a + b, 0);
-    const roundsMissing = Object.values(pickCountByRound).filter(c => c === 0).length;
-    const pickIdeal     = PICK_HORIZON * draftRounds;
+    const roundsMissing = Object.entries(pickCountByRound).filter(([round, count]) => count === 0 && (!ownerPicks?.idealByRound || ownerPicks.idealByRound[round] > 0)).length;
+    const pickIdeal     = ownerPicks?.idealTotal ?? Object.values(draftContext.roundsByYear).reduce((total, count) => total + (count || 0), 0);
     let picksStatus;
-    if      (totalPicks === 0)         picksStatus = 'deficit';
+    if      (pickIdeal === 0 && totalPicks === 0) picksStatus = 'not_applicable';
+    else if (totalPicks === 0)         picksStatus = 'deficit';
     else if (totalPicks < pickIdeal)   picksStatus = 'thin';
     else if (totalPicks === pickIdeal) picksStatus = 'ok';
     else                               picksStatus = 'surplus';
-    const picksAssessment = { pickCountByRound, pickCountByYear, pickCountByYearRound, totalPicks, draftRounds, idealTotal: pickIdeal, pickYears, roundsMissing, status: picksStatus };
+    const pickCoverage = ownerPicks?.coverage || { complete: Array.isArray(ownerPicks) && !!draftContext.season
+      && ['dynasty', 'redraft', 'keeper', 'best_ball', 'dfs'].includes(draftContext.format)
+      && Object.values(draftContext.roundsByYear).every(rounds => Number.isInteger(rounds) && rounds >= 0 && rounds <= 100), format: draftContext.format };
+    // Existing consumers treat any assessment object as active capital and
+    // label a zero/zero balance "surplus". A spent seasonal draft has no
+    // remaining capital assessment; coverage still distinguishes that from
+    // a failed/unavailable ownership load.
+    const hasPickCapital = pickIdeal > 0 || totalPicks > 0;
+    const picksAssessment = pickCoverage.complete && hasPickCapital
+      ? { pickCountByRound, pickCountByYear, pickCountByYearRound, totalPicks, draftRounds, idealTotal: pickIdeal, pickYears, roundsMissing, status: picksStatus }
+      : null;
 
     // Optimal weekly scoring
     const rosterPositions = leagueInfo?.roster_positions || [];
@@ -477,7 +631,7 @@ window.App = window.App || {};
     // Offseason fallback: if no stats available, estimate weekly PPG from DHQ values
     // A roster with 87K total DHQ should project ~150+ PPG, not 0
     if (weeklyPts <= 0) {
-      const totalDHQ = (roster.players || []).reduce((s, pid) => s + getDynastyValue(pid), 0);
+      const totalDHQ = (roster.players || []).reduce((s, pid) => s + valueFor(pid), 0);
       // Rough mapping: 80K DHQ ≈ 140 PPG, 100K DHQ ≈ 170 PPG (based on typical correlation)
       weeklyPts = totalDHQ > 0 ? Math.round(totalDHQ / 550) : 0;
     }
@@ -547,7 +701,7 @@ window.App = window.App || {};
       rosterId: roster.roster_id, ownerId: roster.owner_id,
       teamName, ownerName, avatar,
       wins, losses, ties, pf,
-      posGroups, posAssessment, picksAssessment,
+      posGroups, posAssessment, picksAssessment, pickCoverage: { ...pickCoverage, applicable: hasPickCapital },
       weeklyPts, healthScore,
       tier, tierColor, tierBg,
       panic, window: tradeWindow,
@@ -569,13 +723,37 @@ window.App = window.App || {};
    * @param {Object} leagueInfo   - league object
    * @param {Array}  leagueUsers  - array of Sleeper user objects
    * @param {Array}  tradedPicks  - traded picks array
+   * @param {Object} [context]    - explicit { leagueId, season, playerScores, isCurrent }
    * @returns {Array}             - array of assessment objects
    */
-  function assessAllTeams(rosters, players, playerStats, leagueInfo, leagueUsers, tradedPicks) {
+  function assessAllTeams(rosters, players, playerStats, leagueInfo, leagueUsers, tradedPicks, context) {
+    const check = () => {
+      if (context && (String(context.leagueId) !== pickLeagueId(leagueInfo) || String(context.season) !== String(leagueInfo?.season)
+          || (context.isCurrent && !context.isCurrent()))) throw new Error('The assessment league or account changed.');
+    };
+    check();
+    let valueContext = null;
+    if (context) {
+      if (!context.playerScores || Array.isArray(context.playerScores) || typeof context.playerScores !== 'object'
+          || !Object.keys(context.playerScores).length || Object.values(context.playerScores).some(v => !Number.isFinite(v) || v < 0)) {
+        throw new Error('League values are unavailable for this assessment.');
+      }
+      // Mirrors the existing dynastyValue contract, including inactive/retired
+      // players. Injury status (including IR) does not erase a player's value.
+      valueContext = { playerScores: context.playerScores, valueFor: pid => {
+        const p = players?.[pid];
+        if (!p || p.status === 'Inactive' || p.status === 'Retired') return 0;
+        return context.playerScores[pid] > 0 ? context.playerScores[pid] : 0;
+      } };
+      // An explicitly provided draft list belongs to this assessment. Never
+      // adopt an unrelated active bridge's draft list for background work.
+      leagueInfo = { ...leagueInfo, drafts: Array.isArray(leagueInfo.drafts) ? leagueInfo.drafts : [] };
+    }
+    const valueFor = valueContext ? valueContext.valueFor : getDynastyValue;
     const rosterPositions = leagueInfo?.roster_positions || [];
     const totalTeams = (rosters || []).length;
     const nflStarterPool = buildNflStarterPool(totalTeams);
-    const nflStarterSet = buildNflStarterSet(players, playerStats, nflStarterPool);
+    const nflStarterSet = buildNflStarterSet(players, playerStats, nflStarterPool, valueContext);
     const picksByOwner  = buildPicksByOwner(rosters, leagueInfo, tradedPicks);
 
     // Compute WEEKLY_TARGET from league data — median of all teams' optimal PPG
@@ -588,6 +766,7 @@ window.App = window.App || {};
       minStarterQuality: buildMinStarterQuality(rosterPositions),
       posWeights: buildPosWeights(rosterPositions),
       weeklyTarget: WEEKLY_TARGET_DYN,
+      ...(valueContext ? { valueFor } : {}),
     };
 
     // League median of projected starter points per position — feeds the
@@ -638,7 +817,7 @@ window.App = window.App || {};
     let maxDHQ = 0;
     assessments.forEach(a => {
       const r = rosterById[a.rosterId];
-      const totalDHQ = (r?.players || []).reduce((s, pid) => s + getDynastyValue(pid), 0);
+      const totalDHQ = (r?.players || []).reduce((s, pid) => s + valueFor(pid), 0);
       a.totalDHQ = totalDHQ;
       if (totalDHQ > maxDHQ) maxDHQ = totalDHQ;
     });
@@ -656,7 +835,14 @@ window.App = window.App || {};
       })
       .forEach((a, i) => { a.powerRank = i + 1; });
 
-    return assessments;
+    check();return assessments;
+  }
+
+  // An explicit capability name prevents a consumer on an older shared pin
+  // from silently passing a seventh argument that the old function ignores.
+  function assessAllTeamsWithContext(rosters, players, playerStats, leagueInfo, leagueUsers, tradedPicks, context) {
+    if (!context || typeof context.isCurrent !== 'function') throw new Error('A current assessment context is required.');
+    return assessAllTeams(rosters, players, playerStats, leagueInfo, leagueUsers, tradedPicks, context);
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -673,7 +859,7 @@ window.App = window.App || {};
   // call: ReconAI's League Intel panel calls them ~4× per render and the Trade
   // Builder hits the baseline assessment on every asset toggle. Memoize on a
   // cheap signature of the inputs that actually change an assessment: the
-  // league, the LI score build, traded-pick count, and each roster's player set
+    // league, the LI score build, pick context, and each roster's player set
   // (so a 1-for-1 trade — which leaves counts unchanged — still invalidates).
   let _assessCache = { sig: null, all: null, byId: null };
   let _starterSetCache = { sig: null, set: null };
@@ -693,7 +879,7 @@ window.App = window.App || {};
     // the signature so an assessment computed before the depth charts landed
     // recomputes when they do, instead of serving vet-blind verdicts all day.
     const roleCount = (window.App?.NflRoles?.count?.() || 0);
-    return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|sc' + scoreCount + '|st' + statCount + '|r' + roleCount + '|tp' + ((S.tradedPicks || []).length) + '|' + fp;
+    return (S.currentLeagueId || '') + '|' + (LI.builtAt || '') + '|sc' + scoreCount + '|st' + statCount + '|r' + roleCount + '|picks' + pickInputFingerprint(pickLeagueFromGlobal(), S.tradedPicks) + '|' + fp;
   }
 
   // ── Stability pin ────────────────────────────────────────────────
@@ -714,7 +900,8 @@ window.App = window.App || {};
   //   v3: weakness logic overhaul · v4: roles-feed race fix ·
   //   v5: tradeable-excess strengths + engine-derived grades ·
   //   v6: superflex QB market alignment (values feed powerScore)
-  var PIN_ENGINE_REV = 6;
+  //   v7: format, ownership and draft-progress-aware pick capital
+  var PIN_ENGINE_REV = 7;
   var _PIN_PREFIX = 'dhq_power_pin_v' + PIN_ENGINE_REV + ':';
 
   function _rosterFingerprint() {
@@ -736,7 +923,7 @@ window.App = window.App || {};
     // day — no reload swing — but lets it re-settle to the current value daily.
     var day = '';
     try { day = new Date().toISOString().slice(0, 10); } catch (e) { day = ''; }
-    return (S.currentLeagueId || '') + '|w' + week + '|d' + day + '|' + fp;
+    return (S.currentLeagueId || '') + '|w' + week + '|d' + day + '|' + fp + '|picks' + pickInputFingerprint(pickLeagueFromGlobal(), S.tradedPicks);
   }
 
   // Data is "ready" to pin only when the inputs the health score depends on have
@@ -788,11 +975,13 @@ window.App = window.App || {};
       var S = window.S || window.App?.S || {};
       var lid = S.currentLeagueId || '_';
       var publish = function () {
+        if (fp !== _rosterFingerprint()) return;
         try { window.OD?.saveLeagueDoc?.(lid, 'powerpin', { fp: fp, rev: PIN_ENGINE_REV, data: data }); }
         catch (e) { /* cloud unavailable — local pin still serves this device */ }
       };
       if (window.OD && window.OD.loadLeagueDoc) {
         window.OD.loadLeagueDoc(lid, 'powerpin').then(function (doc) {
+          if (fp !== _rosterFingerprint()) return;
           // First-publisher-wins only among SAME-engine pins: a cloud pin from
           // an older revision is yesterday's rules and must be overwritten.
           if (doc && doc.rev === PIN_ENGINE_REV && doc.fp === fp && Array.isArray(doc.data) && doc.data.length) {
@@ -818,6 +1007,7 @@ window.App = window.App || {};
       if (_pinCloudCheckedFp === fp) return; // once per league-state per session
       _pinCloudCheckedFp = fp;
       window.OD.loadLeagueDoc(lid, 'powerpin').then(function (doc) {
+        if (fp !== _rosterFingerprint()) return;
         var local = _loadPin(fp);
         // A cloud pin computed by an older engine revision is stale advice
         // wearing today's date — never adopt it (and republish ours over it).
@@ -938,7 +1128,7 @@ window.App = window.App || {};
       return _dhqBrainOverlayAll(pinned);
     }
 
-    const league = S.leagues?.find(l => l.league_id === S.currentLeagueId);
+    const league = pickLeagueFromGlobal();
     const all = assessAllTeams(S.rosters, S.players, S.playerStats, league, S.leagueUsers, S.tradedPicks);
     const byId = new Map(all.map(a => [a.rosterId, a]));
     _assessCache = { sig, all, byId };
@@ -1200,6 +1390,7 @@ window.App = window.App || {};
   window.App.calcOptimalPPG     = calcOptimalPPG;
   window.App.assessTeam         = assessTeam;
   window.App.assessAllTeams     = assessAllTeams;
+  window.App.assessAllTeamsWithContext = assessAllTeamsWithContext;
   window.App.buildPicksByOwner  = buildPicksByOwner;
 
   // Convenience wrappers (read from War Room Scout globals)

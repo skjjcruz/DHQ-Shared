@@ -1,0 +1,307 @@
+FAIL late A refresh 401 cannot clear or replace B
+TypeError: Cannot read properties of null (reading 'user')
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:33:311
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:33:32)
+FAIL late A refresh 200 cannot clear or replace B
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   token: 'header.eyJzdWIiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJpYXQiOjE3ODk5MjkxMzYsImV4cCI6MTc5MDAxNTUzNiwiYXBwX21ldGFkYXRhIjp7InVzZXJfaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJzZXNzaW9uX3ZlcnNpb24iOjEsInRpZXIiOiJwcm8iLCJwcm9kdWN0cyI6WyJ3YXJfcm9vbSJdfX0.signature',
++   user: {
++     email: 'fixture@example.invalid',
++     id: '11111111-1111-4111-8111-111111111111',
++     products: [
++       'war_room'
++     ],
++     tier: 'pro'
++   }
++ }
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:33:271
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:33:32)
+FAIL late refresh body and replaced cached user cannot publish
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   token: 'header.eyJzdWIiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJpYXQiOjE3ODk5MjkxMzYsImV4cCI6MTc5MDAxNTUzNiwiYXBwX21ldGFkYXRhIjp7InVzZXJfaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJzZXNzaW9uX3ZlcnNpb24iOjEsInRpZXIiOiJwcm8iLCJwcm9kdWN0cyI6WyJ3YXJfcm9vbSJdfX0.signature',
++   user: {
++     email: 'fixture@example.invalid',
++     id: '11111111-1111-4111-8111-111111111111',
++     products: [
++       'war_room'
++     ],
++     tier: 'pro'
++   }
++ }
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:34:356
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:34:1)
+FAIL observed A to B to A generation invalidates old refresh
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   token: 'header.eyJzdWIiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJpYXQiOjE3ODk5MjkxMzYsImV4cCI6MTc5MDAxNTUzNiwiYXBwX21ldGFkYXRhIjp7InVzZXJfaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJzZXNzaW9uX3ZlcnNpb24iOjEsInRpZXIiOiJwcm8iLCJwcm9kdWN0cyI6WyJ3YXJfcm9vbSJdfX0.signature',
++   user: {
++     email: 'fixture@example.invalid',
++     id: '11111111-1111-4111-8111-111111111111',
++     products: [
++       'war_room'
++     ],
++     tier: 'pro'
++   }
++ }
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:35:288
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:35:1)
+PASS same-account concurrent refresh shares request and new token persists
+FAIL token-only old OAuth app record repairs the same claimed owner
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ null
+- '11111111-1111-4111-8111-111111111111'
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:37:243
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:37:7)
+FAIL foreign owner, contradictory cached user and changed version response rejected
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   token: 'header.eyJzdWIiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJpYXQiOjE3ODk5MjkxMzYsImV4cCI6MTc5MDAxNTUzNiwiYXBwX21ldGFkYXRhIjp7InVzZXJfaWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJzZXNzaW9uX3ZlcnNpb24iOjEsInRpZXIiOiJwcm8iLCJwcm9kdWN0cyI6WyJ3YXJfcm9vbSJdfX0.signature',
++   user: {
++     email: 'fixture@example.invalid',
++     id: '22222222-2222-4222-8222-222222222222',
++     products: [
++       'war_room'
++     ],
++     tier: 'pro'
++   }
++ }
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:38:645
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:38:1)
+FAIL refresh rejects missing or contradictory token and profile entitlement fields
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   token: 'header.eyJzdWIiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJpYXQiOjE3ODk5MjkxMzYsImV4cCI6MTc5MDAxNTUzNiwiYXBwX21ldGFkYXRhIjp7InVzZXJfaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJzZXNzaW9uX3ZlcnNpb24iOjEsInRpZXIiOiJwcm8iLCJwcm9kdWN0cyI6WyJ3YXJfcm9vbSJdfX0.signature',
++   user: {
++     email: 'fixture@example.invalid',
++     id: '11111111-1111-4111-8111-111111111111',
++     products: [
++       'war_room'
++     ],
++     tier: 'pro'
++   }
++ }
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:39:554
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:39:1)
+FAIL current revoked session clears modern and old legacy fallback only once
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+true !== false
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:40:325
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:40:1)
+FAIL expired session requests no refresh and cannot expose an older legacy user
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'header.eyJzdWIiOiJmaXh0dXJlIiwiaWF0IjoxNzg5OTI5MTM2LjY3NSwiZXhwIjoxNzkwMDE1NTM2LjY3NSwiYXBwX21ldGFkYXRhIjp7InNsZWVwZXJfdXNlcm5hbWUiOiJmaXh0dXJlIn19.signature'
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:41:200
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:41:7)
+FAIL malformed modern presence never uses signed legacy fallback
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'header.eyJzdWIiOiJmaXh0dXJlIiwiaWF0IjoxNzg5OTI5MTM2LjY3NSwiZXhwIjoxNzkwMDE1NTM2LjY3NSwiYXBwX21ldGFkYXRhIjp7InNsZWVwZXJfdXNlcm5hbWUiOiJmaXh0dXJlIn19.signature'
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:42:338
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:42:7)
+FAIL transport deadline releases retry while keeping current valid account
+AssertionError [ERR_ASSERTION]: account deadline exists
+    at Object.timeout (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:28:249)
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:43:342
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:43:46)
+FAIL body deadline releases retry while keeping current valid account
+AssertionError [ERR_ASSERTION]: account deadline exists
+    at Object.timeout (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:28:249)
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:43:342
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:43:40)
+FAIL network rejection and HTTP 503 remain retryable within same page
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+1 !== 2
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:44:426
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:44:1)
+PASS refresh storage quota failure preserves confirmed old session without claiming replacement
+FAIL late A profile 401 cannot publish under or delete B
+TypeError: Cannot read properties of null (reading 'user')
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:46:310
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:46:31)
+FAIL late A profile 200 cannot publish under or delete B
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   onboardingComplete: true,
++   platforms: {
++     sleeper: 'fixture'
++   },
++   products: [
++     'war_room'
++   ],
++   tier: 'pro'
++ }
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:46:270
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:46:31)
+FAIL profile parsing completion checks account again
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   onboardingComplete: true,
++   platforms: {
++     sleeper: 'fixture'
++   },
++   products: [
++     'war_room'
++   ],
++   tier: 'pro'
++ }
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:47:298
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:47:1)
+PASS normal profile uses renewed token and explicit server entitlements
+FAIL foreign or partial profile cannot invent free tier or use legacy account
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   onboardingComplete: true,
++   platforms: {
++     sleeper: 'fixture'
++   },
++   products: [
++     'war_room'
++   ],
++   tier: 'pro'
++ }
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:49:423
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:49:1)
+FAIL profile timeout returns no invented entitlement and permits retry
+AssertionError [ERR_ASSERTION]: account deadline exists
+    at Object.timeout (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:28:249)
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:50:173
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:50:1)
+FAIL valid signed legacy profile remains available only for matching username
+TypeError: Cannot read properties of undefined (reading 'resolve')
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:51:295
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:51:7)
+FAIL late legacy profile cannot publish after modern sign-in or username change
+TypeError: Cannot read properties of undefined (reading 'resolve')
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:52:370
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:52:7)
+FAIL SDK adapter preserves normal provider persistence and retires old token client
+TypeError: Cannot read properties of undefined (reading 'storage')
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:53:184
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:53:7)
+FAIL SDK adapter blocks late provider refresh writes after same-tab provider switch
+TypeError: Cannot read properties of undefined (reading 'storage')
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:54:318
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:54:7)
+FAIL observed provider A to B to A never revives the retired adapter
+TypeError: Cannot read properties of undefined (reading 'storage')
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:55:256
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:55:7)
+FAIL signOut never invokes persistent SDK cleanup and late logout preserves B
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   token: 'header.eyJzdWIiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJpYXQiOjE3ODk5MjkxMzYsImV4cCI6MTc5MDAxNTUzNiwiYXBwX21ldGFkYXRhIjp7InVzZXJfaWQiOiIxMTExMTExMS0xMTExLTQxMTEtODExMS0xMTExMTExMTExMTEiLCJzZXNzaW9uX3ZlcnNpb24iOjEsInRpZXIiOiJwcm8iLCJwcm9kdWN0cyI6WyJ3YXJfcm9vbSJdfX0.signature',
++   user: {
++     email: 'fixture@example.invalid',
++     id: '11111111-1111-4111-8111-111111111111',
++     products: [
++       'war_room'
++     ],
++     tier: 'pro'
++   }
++ }
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:56:265
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:56:7)
+FAIL local-only signout reloads and prevents pending refresh resurrection
+TypeError: Cannot read properties of undefined (reading 'signedOut')
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:57:245
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:57:1)
+FAIL unconfirmed provider signout is bounded and reports only local completion
+AssertionError [ERR_ASSERTION]: account deadline exists
+    at Object.timeout (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:28:249)
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:58:227
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:58:7)
+PASS unconfigured local module does not throw during provider-key setup
+FAIL legacy display username cannot select another signed owner
+AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'another-user'
+- null
+
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:60:207
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:63)
+    at main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:60:7)
+FAIL storage inaccessible produces no identity or requests
+TypeError: Cannot read properties of undefined (reading 'signedOut')
+    at /Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:61:332
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:31:57)
+    at async main (/Users/jacobc/Projects/dhq-shared-readiness-session/tests/session-lifecycle.cjs:61:1)
+Shared session lifecycle: 4 passed, 28 failed

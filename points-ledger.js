@@ -82,12 +82,24 @@
     // One in-flight/settled load per league+season — the projection feeds are
     // multi-MB, so they are fetched at most once per page session.
     var _cache = {};
+    var _cacheScopes = {};
 
     function load(ctx) {
         var league = ctx.league || {};
         var season = Number(ctx.season || league.season) || new Date().getFullYear();
-        var key = String(league.league_id || 'lg') + ':' + season;
-        if (_cache[key]) return _cache[key];
+        var key = String(league.league_id || 'lg') + ':' + season + (ctx.cacheKey ? ':' + ctx.cacheKey : '');
+        var current = function () { try { return !ctx.isCurrent || ctx.isCurrent(); } catch (e) { return false; } };
+        var check = function () { if (!current()) throw new Error('The league or account changed while loading projections.'); };
+        check();
+        // A canceled producer must not poison a new caller's retry. A settled
+        // result is independent of the old caller's mounted lifetime.
+        var previous = _cacheScopes[key];
+        if (_cache[key] && (!previous || previous.settled || previous.current())) {
+            return ctx.isCurrent ? _cache[key].then(function (value) { check(); return value; }) : _cache[key];
+        }
+        var entry = { current: current, settled: false };
+        _cacheScopes[key] = entry;
+        var remove = function () { if (_cacheScopes[key] === entry) { delete _cache[key]; delete _cacheScopes[key]; } };
         var fetchJson = ctx.fetchJson || defaultFetchJson;
         var scoring = league.scoring_settings || {};
         var rosters = ctx.rosters || [];
@@ -101,13 +113,14 @@
         for (var w = 1; w <= 18; w++) {
             weekReqs.push(
                 fetchJson('https://api.sleeper.app/v1/projections/nfl/regular/' + season + '/' + w)
-                    .catch(function () { return {}; }) // a missing week never sinks the load
+                    .catch(function () { check(); return {}; }) // a missing week never sinks the load
             );
         }
         _cache[key] = Promise.all([
             Promise.all(weekReqs),
-            fetchJson('https://api.sleeper.app/v1/stats/nfl/regular/' + (season - 1)).catch(function () { return {}; }),
+            fetchJson('https://api.sleeper.app/v1/stats/nfl/regular/' + (season - 1)).catch(function () { check(); return {}; }),
         ]).then(function (feeds) {
+            check();
             var weeks = feeds[0] || [], prev = feeds[1] || {};
             // Per player: total projected points across the season and the
             // number of weeks with a real game projection (bye weeks project
@@ -229,7 +242,8 @@
             // result back but do NOT cache it — the next call must retry.
             var anyPoints = rosters.some(function (r) { return (teams[r.roster_id] || {}).total > 0; });
             var hasBodies = rosters.some(function (r) { return (r.players || []).length > 0; });
-            if (!anyPoints && hasBodies) delete _cache[key];
+            if (!anyPoints && hasBodies) remove();
+            entry.settled = true;
 
             return {
                 season: season, bars: BARS, barTotal: barTotal, groups: groups,
@@ -237,7 +251,7 @@
                 playersPpg: playersPpg, // LAB v2
             };
         }).catch(function (e) {
-            delete _cache[key]; // a failed load must not poison the session
+            remove(); // do not delete a newer caller's replacement load
             throw e;
         });
         return _cache[key];

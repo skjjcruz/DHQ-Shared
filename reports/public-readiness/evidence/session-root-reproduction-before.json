@@ -1,0 +1,24 @@
+{
+  "source": "actual shared dedbb161 supabase-client.js",
+  "network": "local deferred fixtures only",
+  "results": [
+    {
+      "case": "old account refresh 401",
+      "expectedAccount": "fixture-account-b",
+      "actualAccount": null,
+      "defect": true
+    },
+    {
+      "case": "old account refresh 200",
+      "expectedAccount": "fixture-account-b",
+      "actualAccount": "fixture-account-a",
+      "defect": true
+    },
+    {
+      "case": "old account profile 401",
+      "expectedAccount": "fixture-account-b",
+      "actualAccount": null,
+      "defect": true
+    }
+  ]
+}

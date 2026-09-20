@@ -1,0 +1,130 @@
+PASS validFullModuleHydrationLeavesActiveBridgeAlone
+FAIL selectedLeagueAndYearBeatConflictingCredentialRecords AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async selectedLeagueAndYearBeatConflictingCredentialRecords (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:25:249)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL foreignOrMissingCoreDataCannotBecomeAConnectedEmptyLeague AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async foreignOrMissingCoreDataCannotBecomeAConnectedEmptyLeague (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:26:476)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL rulesFailureIsNotSparseScoringSuccess AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async rulesFailureIsNotSparseScoringSuccess (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:27:194)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL accountChangeDuringCoreFetchStopsFollowups AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async accountChangeDuringCoreFetchStopsFollowups (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:28:231)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL credentialsFranchiseAndStorageEpochInterruptRequests AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async credentialsFranchiseAndStorageEpochInterruptRequests (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:29:383)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL explicitViewCancellationStopsBeforeAnyRequest AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async explicitViewCancellationStopsBeforeAnyRequest (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:30:74)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL privateRawCacheCannotCrossAccountsOrExplicitKeys AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+1 !== 2
+
+    at privateRawCacheCannotCrossAccountsOrExplicitKeys (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:31:252)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL mappedRawCannotPublishAfterAccountChanges AssertionError [ERR_ASSERTION]: Missing expected exception.
+    at mappedRawCannotPublishAfterAccountChanges (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:32:144)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL selectedFranchiseMustExist AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async selectedFranchiseMustExist (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:33:55)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL legacyConnectDoesNotPartiallyOverwriteNewActiveLeague AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ '{"currentLeagueId":"previous","players":{"mfl_101":{"player_id":"mfl_101","_mfl_id":"101","full_name":"Fixture Player","first_name":"Fixture","last_name":"Player","position":"QB","team":"KC","age":0,"years_exp":0,"injury_status":"","draft_year":null,"college":"","rookie":false,"nfl_draft_round":"","nfl_draft_pick":""}},"rosters":[{"roster_id":"0001","owner_id":"0001","players":["mfl_101"],"starters":[],"reserve":[],"taxi":[],"settings":{"wins":0,"losses":0,"ties":0,"fpts":0,"fpts_decimal":0,"fpts_against":0,"fpts_against_decimal":0},"_owner_name":"Fixture One","_team_name":"Fixture One","_team_abbrev":"","_mflPlayerIds":{"mfl_101":"101"}},{"roster_id":"0002","owner_id":"0002","players":[],"starters":[],"reserve":[],"taxi":[],"settings":{"wins":0,"losses":0,"ties":0,"fpts":0,"fpts_decimal":0,"fpts_against":0,"fpts_against_decimal":0},"_owner_name":"Fixture Two","_team_name":"Fixture Two","_team_abbrev":"","_mflPlayerIds":{}}],"platform":"mfl","mflLeagueId":"12345","mflYear":"2025","_mflApiKey":"key-a","leagueUsers":[{"user_id":"0001","display_name":"Fixture One","username":"fixture_one","avatar":null,"metadata":{}},{"user_id":"0002","display_name":"Fixture Two","username":"fixture_two","avatar":null,"metadata":{}}],"bracket":{"w":[],"l":[]},"matchups":{},"season":"2025"}'
+- '{"currentLeagueId":"previous","players":{},"rosters":["preserved"],"platform":"sleeper"}'
+
+    at legacyConnectDoesNotPartiallyOverwriteNewActiveLeague (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:34:365)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL invalidModernIdentityCannotFallBackToProxyAnon AssertionError [ERR_ASSERTION]: The input did not match the regular expression /session|identity/i. Input:
+
+"SyntaxError: Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+
+    at async invalidModernIdentityCannotFallBackToProxyAnon (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:35:185)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL sameAccountKeyChangeRefetchesAndPublicPlayersNeverCarrySecrets AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+
+  assert(x.calls.length>before)
+
+    at sameAccountKeyChangeRefetchesAndPublicPlayersNeverCarrySecrets (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:36:215)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL malformedSavedCredentialsCannotFallBackToUnrelatedFlatCredentials AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async malformedSavedCredentialsCannotFallBackToUnrelatedFlatCredentials (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:37:172)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL anotherSavedLeagueCannotBorrowTheActiveVolatileKey AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'fixture-key-a'
+- null
+
+    at anotherSavedLeagueCannotBorrowTheActiveVolatileKey (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:38:193)
+    at /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:227
+FAIL connectionSaveIsTruthfulAndRollsBackPartialStorageFailure AssertionError [ERR_ASSERTION]: Missing expected exception.
+    at connectionSaveIsTruthfulAndRollsBackPartialStorageFailure (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:39:303)
+    at /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:227
+FAIL connectReturnsCanonicalSelection AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'mfl_ 12345#source_2025'
+- 'mfl_12345_2025'
+       ^
+
+    at connectReturnsCanonicalSelection (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:40:141)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL bodyDeadlineHasRetryAndLateCoreCannotPopulateCache Error: Actual operation did not settle within the test deadline
+    at Timeout.<anonymous> (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:287)
+    at listOnTimeout (node:internal/timers:605:17)
+    at process.processTimers (node:internal/timers:541:7)
+FAIL lineupWriteKeepsCapturedTokenAndRejectsStaleOutcome AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async lineupWriteKeepsCapturedTokenAndRejectsStaleOutcome (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:42:378)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL malformedLineupTargetsNeverStartTransport AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+1 !== 0
+
+    at malformedLineupTargetsNeverStartTransport (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:43:427)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL writeTimeoutReportsUnknownOutcomeAndDoesNotRepeat Error: Actual operation did not settle within the test deadline
+    at Timeout.<anonymous> (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:287)
+    at listOnTimeout (node:internal/timers:605:17)
+    at process.processTimers (node:internal/timers:541:7)
+FAIL loginResponseIsAccountBoundAndCannotAuthorizeLaterAccount AssertionError [ERR_ASSERTION]: The input did not match the regular expression /changed/. Input:
+
+'Error: MFL did not confirm the lineup was set — verify on MyFantasyLeague.'
+
+    at async loginResponseIsAccountBoundAndCannotAuthorizeLaterAccount (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:45:278)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL guestPublicReadAndPositiveWriteRemainSupported AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async guestPublicReadAndPositiveWriteRemainSupported (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:46:142)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL savedPrivateCredentialsNeverBecomeAnotherAccountsConnection AssertionError [ERR_ASSERTION]: The input did not match the regular expression /another|account/i. Input:
+
+'TypeError: x.api.provider.loadConnection is not a function'
+
+    at savedPrivateCredentialsNeverBecomeAnotherAccountsConnection (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:48:252)
+    at /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:227
+FAIL unownedLegacyRecordsArePreservedWithoutAdoption AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async unownedLegacyRecordsArePreservedWithoutAdoption (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:49:273)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL volatileKeyRequiresMatchingOwnerAndLeague AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
++ actual - expected
+
++ 'fixture-key-a'
+- null
+
+    at volatileKeyRequiresMatchingOwnerAndLeague (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:50:249)
+    at /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:227
+FAIL manuallyConnectedStubsAreAlsoBoundToTheirAccount AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async manuallyConnectedStubsAreAlsoBoundToTheirAccount (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:51:215)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:207
+FAIL bothAccountsRetainTheirOwnSavedSelection TypeError: x.api.provider.loadConnection is not a function
+    at bothAccountsRetainTheirOwnSavedSelection (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:53:334)
+    at /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:227
+FAIL clearingCorruptLegacyMetadataStillRemovesVolatileSecrets AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+true !== false
+
+    at clearingCorruptLegacyMetadataStillRemovesVolatileSecrets (/Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:55:233)
+    at /Users/jacobc/Projects/dhq-shared-readiness-mfl/tests/mfl-provider-context.cjs:59:227
+29 MFL actual-module groups; 28 failed

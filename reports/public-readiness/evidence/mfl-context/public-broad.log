@@ -1,0 +1,96 @@
+
+> owner-dashboard-v6@1.0.0 test
+> node tests/run.js && node tests/season-odds-engines.js && node tests/faab-engine.js && node tests/chopped.js && node tests/chop-odds.js
+
+  Loading core.js … OK
+  Loading league-skin.js … OK
+  Loading player-value.js … OK
+  Extracting computeWeightedDNA … OK
+
+  Extracting buildEmpirePortfolioModel … OK
+
+
+  normPos  ...........................
+  league skin  ...
+  calcRawPts  ...........
+  calcPPG  ......
+  getUserTier  ........
+  canAccess (billing live: gating on by default)  ...
+  canAccess (tier enforcement on)  ..............
+  getPickValue (fallback values, no DHQ engine)  ..........
+  projectPlayerValue  .............
+  DHQ-weighted average age formula  ....
+  computeWeightedDNA  .......
+  buildEmpirePortfolioModel  .....
+
+Sign-in session contract
+...........
+Weekly projection — Sleeper source of truth
+..
+  account surface (billing + legal requirements)  ..................
+
+✓ 142 tests — 142 passed, 0 failed
+  ok  luck: all-play records match hand computation
+  ok  luck: expected wins and luck are consistent
+  ok  luck: unplayed weeks are dropped by the fetch gate, zero-score rows still count in compute
+  ok  odds: deterministic for a fixed seed
+  ok  odds: dominant team clears the field; probabilities are coherent
+  ok  odds: leverage brackets the unconditional probability
+  ok  odds: division winners are seeded when rosters carry divisions
+  ok  luck: fetchWeeklyScores honors explicit throughWeek and drops dead weeks
+  ok  luck: no matchups fetcher → empty ledger, never a throw
+
+PASS 9 tests — 9 passed, 0 failed
+  ok  faab: cold start flags small samples and still produces a legal plan
+  ok  faab: ladder win probabilities are monotonic and rivals respect budgets
+  ok  faab: Sleeper waiver_bid_min floors every number (owner league: $13 minimum)
+  ok  faab: failed claims count as bid evidence
+
+PASS 4 tests — 4 passed, 0 failed
+  ok  isChopped: reads Sleeper type 3, not a heuristic
+  ok  isChopped: honors a normalized/overridden type string
+  ok  lastChoppedLeg: exposed, null when absent
+  ok  eliminatedWeek: the week the team was chopped, null while alive
+  ok  isAliveInWeek: a team chopped in week 3 WAS alive in week 3
+  ok  aliveRosters / eliminatedRosters partition the league
+  ok  state: full picture with the chop order sorted by week
+  ok  state: crowns a survivor only when everyone else is chopped
+  ok  state: past the last chopped leg there is no next chop
+  ok  state: a non-chopped league reports isChopped false and no survivor
+  ok  skin: type 3 resolves to "chopped", not the raw number
+  ok  skin: chopped rides the SEASONAL branch — keeps the features it needs
+  ok  skin: a real keeper league still gets its keeper controls
+  ok  skin: chopped suppresses trades, matchups, standings and playoff odds
+  ok  skin: the new suppressors default TRUE for every existing format
+  ok  skin: showTrades also respects a league that simply disabled trading
+  ok  skin: chopped vocabulary speaks survival, not trading
+  ok  faab: chopped teams are not counted as rivals
+  ok  faab: league spend averages over LIVE teams only
+  ok  faab: an ordinary redraft league is completely unaffected
+
+PASS: 20 tests
+  ok  returns null for a non-chopped league — this simulator has no business there
+  ok  returns null with no rosters
+  ok  survival ranks inversely to scoring — the worst team is in most danger
+  ok  this-week chop probabilities sum to ~100% across living teams
+  ok  win probabilities sum to ~100% and favour the best team
+  ok  a truncated config (fewer legs than teams) leaves several alive, so nobody has won
+  ok  the winner is credited the full remaining calendar, not just to the clinching week
+  ok  deterministic: the same seed reproduces the same odds exactly
+  ok  already-chopped teams are excluded from the sim and reported as dead
+  ok  a lone survivor wins 100% and nothing is simulated
+  ok  expWeeksLeft is shorter for a team likely to be chopped early
+  ok  survivalHorizon prefers the simulated horizon, falls back to the calendar
+  ok  the survival curve decays and is capped at the last chopped leg
+  ok  preseason: no games played → seeded from projected means, and says so
+  ok  preseason with NO projections: nobody is singled out
+  ok  fitDists weights recent weeks heavier and never returns a metronome
+  ok  simulate caches per league so sync consumers can read the horizon
+  ok  horizonFor falls back cleanly for an unknown league
+  ok  a run without myRosterId does not poison the cache
+  ok  pacing: a short horizon lifts the spend cap — unspent budget is wasted
+  ok  pacing: flags hoarding when the burn rate leaves budget on the table
+  ok  pacing: a team spending to its horizon reads on-pace
+  ok  pacing: absent horizon leaves the engine byte-identical to before
+
+PASS: 23 tests

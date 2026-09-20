@@ -1,0 +1,15 @@
+PASS verifier stays in tab storage, only challenge travels before consent
+PASS blocked storage prevents server request and provider navigation
+PASS cached user and token mismatch prevents starting or completing
+PASS duplicate start and delayed account change cannot redirect
+PASS old server protocol and foreign consent URLs fail visibly
+PASS same-tab reload completes once, confirms storage and restores original hash
+PASS transferred callback lacks initiating tab proof even with same account
+PASS wrong state, account, session version, expiry and path do not send code
+PASS provider denial clears pending proof without exchange
+PASS late completion cannot install connection in a different account
+PASS storage event invalidates a completion even if token text is unchanged
+PASS quota failure cannot claim saved connection
+PASS timeout does not replay or install late completion; old session remains
+PASS existing saved Yahoo API session is retained
+Yahoo browser proof: 14 passed, 0 failed

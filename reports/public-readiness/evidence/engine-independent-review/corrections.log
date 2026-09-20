@@ -1,0 +1,4 @@
+PASS warm in-place player change equals fresh build
+PASS initial and later canceled coalesced callers reject separately
+PASS contradictory modern identity rejected before cache access
+PASS actual Scout age fallback preserves full baseline results

@@ -1,0 +1,20 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
+const {chromium}=require(process.env.PLAYWRIGHT_MODULE_PATH||'@playwright/test');
+const source=fs.readFileSync(path.resolve(__dirname,'../yahoo-api.js'),'utf8');
+const {account}=require('./yahoo-browser-binding.cjs');
+const app='https://dhqfootball.com/index.html',api='https://sxshiqyxhhifvtfqawbq.supabase.co/functions/v1/yahoo-proxy';
+const {raw}=require('./helpers/yahoo-fixtures.cjs');
+(async()=>{let browser;try{
+ browser=await chromium.launch({headless:true,executablePath:process.env.PLAYWRIGHT_CHROME_PATH||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+ const context=await browser.newContext({viewport:{width:320,height:700}}),page=await context.newPage();let blocked=null,mode='delay',name='Private A',calls=0;const unexpected=[];
+ await context.addInitScript(({session})=>{if(location.origin==='https://dhqfootball.com'){localStorage.setItem('fw_session_v1',session);sessionStorage.setItem('yahoo_session_id','provider-a');}},{session:account()});
+ await context.route('**/*',async route=>{const req=route.request();if(req.url()===app)return route.fulfill({contentType:'text/html',body:'<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>body{font:18px system-ui;margin:16px}button{min-height:48px;font:inherit}p{overflow-wrap:anywhere}</style><button id="read">Read Yahoo</button><button id="load">Load league</button><p id="status"></p><script>window.App={Platforms:{register(){}}};window.OD={getSessionToken:()=>JSON.parse(localStorage.getItem("fw_session_v1")).token};</script><script>'+source+'</script><script>document.getElementById("read").onclick=async()=>{try{const d=await Yahoo.apiRequest("/users");document.getElementById("status").textContent=d.privateData}catch(e){document.getElementById("status").textContent=e.message}};document.getElementById("load").onclick=async()=>{try{const d=await Yahoo.provider.hydrate({id:"yahoo_423.l.12345",_yahooLeagueKey:"423.l.12345"},{});document.getElementById("status").textContent=d.league.name}catch(e){document.getElementById("status").textContent=e.message}}</script>'});
+ if(req.url()===api){calls++;if(mode==='delay'){blocked=route;return;}return route.fulfill({contentType:'application/json',body:JSON.stringify(raw(name))});}
+ unexpected.push(req.url());return route.abort();});
+ await page.goto(app);await page.locator('#read').click();await page.waitForTimeout(25);assert.ok(blocked);await page.evaluate(value=>localStorage.setItem('fw_session_v1',value),account('22222222-2222-4222-8222-222222222222'));await blocked.fulfill({contentType:'application/json',body:JSON.stringify({privateData:'Private A never publish'})});await page.waitForFunction(()=>document.querySelector('#status').textContent.includes('account changed'));
+ assert.ok(!(await page.locator('#status').innerText()).includes('Private A'));console.log('PASS Chrome320 late A response is not published after B sign-in');
+ mode='data';await page.evaluate(value=>localStorage.setItem('fw_session_v1',value),account());await page.locator('#load').click();await page.waitForFunction(()=>document.querySelector('#status').textContent==='Private A');const before=calls;
+ name='Private B';await page.evaluate(value=>{localStorage.setItem('fw_session_v1',value);sessionStorage.setItem('yahoo_session_id','provider-b');},account('22222222-2222-4222-8222-222222222222'));await page.locator('#load').click();await page.waitForFunction(()=>document.querySelector('#status').textContent==='Private B');assert.equal(calls-before,4);assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);assert.deepEqual(unexpected,[]);console.log('PASS Chrome320 account B fetches its own raw league instead of A cached data');
+ fs.mkdirSync(path.resolve(__dirname,'../output/playwright'),{recursive:true});await page.screenshot({path:path.resolve(__dirname,'../output/playwright/yahoo-data-account-context.png')});
+}finally{if(browser)await browser.close();}})().catch(e=>{console.error(e);process.exitCode=1;});

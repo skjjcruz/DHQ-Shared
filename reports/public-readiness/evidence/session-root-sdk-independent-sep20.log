@@ -1,0 +1,7 @@
+PASS Chrome320 late app refresh 401 preserves B
+PASS Chrome320 late app refresh 200 preserves B
+PASS Chrome320 late app profile rejection preserves B
+PASS actual Supabase 2.101.1 SDK persists normal provider session with guarded adapter
+PASS actual SDK delayed A refresh cannot overwrite B provider session
+PASS Chrome late captured-provider logout preserves later explicit sign-in
+PASS actual SDK sends anonymous authorization for invalid modern storage despite valid provider B

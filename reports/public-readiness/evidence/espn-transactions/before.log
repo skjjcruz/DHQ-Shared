@@ -1,0 +1,60 @@
+FAIL mappedTradeUsesSharedRosterPlayerAndTimestampContract TypeError: Cannot read properties of undefined (reading 'sleeper-12')
+    at mappedTradeUsesSharedRosterPlayerAndTimestampContract (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:8:157)
+    at /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:79
+    at Object.<anonymous> (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:279)
+    at Module._compile (node:internal/modules/cjs/loader:1521:14)
+    at Module._extensions..js (node:internal/modules/cjs/loader:1623:10)
+    at Module.load (node:internal/modules/cjs/loader:1266:32)
+    at Module._load (node:internal/modules/cjs/loader:1091:12)
+    at Function.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:164:12)
+    at node:internal/main/run_main_module:28:49
+FAIL nonExecutedTradesAreExplicitlyExcludedFromCompletedHistory TypeError: Cannot read properties of undefined (reading 'length')
+    at nonExecutedTradesAreExplicitlyExcludedFromCompletedHistory (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:9:291)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL nonExecutedOnlyFeedRetainsItsExclusionWarningAfterOutage TypeError: Cannot read properties of undefined (reading 'status')
+    at nonExecutedOnlyFeedRetainsItsExclusionWarningAfterOutage (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:10:260)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL missingTradeStatusCannotClaimConfirmedHistory TypeError: Cannot read properties of undefined (reading 'status')
+    at missingTradeStatusCannotClaimConfirmedHistory (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:11:199)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL incompleteTradeCannotBecomeBlankActivity TypeError: Cannot read properties of undefined (reading 'status')
+    at incompleteTradeCannotBecomeBlankActivity (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:12:363)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL omittedEmptyPlayerListsRemainValid TypeError: Cannot read properties of undefined (reading 'status')
+    at omittedEmptyPlayerListsRemainValid (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:13:257)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL firstOutageIsUnknownNotEmptySuccess TypeError: Cannot read properties of undefined (reading 'status')
+    at firstOutageIsUnknownNotEmptySuccess (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:14:200)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL emptyConfirmedFeedIsDistinct TypeError: Cannot read properties of undefined (reading 'status')
+    at emptyConfirmedFeedIsDistinct (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:15:114)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL malformedOrForeignReplyCannotClaimReady TypeError: Cannot read properties of undefined (reading 'status')
+    at malformedOrForeignReplyCannotClaimReady (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:16:274)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL failedRefreshPreservesLastConfirmedRowsAndTimestamp TypeError: Cannot read properties of undefined (reading 'status')
+    at failedRefreshPreservesLastConfirmedRowsAndTimestamp (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:17:247)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL confirmedEmptyCanBeStaleWithoutClaimingNoActivity TypeError: Cannot read properties of undefined (reading 'status')
+    at confirmedEmptyCanBeStaleWithoutClaimingNoActivity (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:18:255)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL retryReplacesStaleRowsWithFreshVerifiedEmpty TypeError: Cannot read properties of undefined (reading 'status')
+    at retryReplacesStaleRowsWithFreshVerifiedEmpty (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:19:266)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL cacheCannotCrossAccountOrConnection TypeError: Cannot read properties of undefined (reading 'status')
+    at cacheCannotCrossAccountOrConnection (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:20:358)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL cacheCannotCrossSeason TypeError: Cannot read properties of undefined (reading 'status')
+    at cacheCannotCrossSeason (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:21:301)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL viewReloadCanKeepSameAccountConfirmedFeed TypeError: Cannot read properties of undefined (reading 'status')
+    at viewReloadCanKeepSameAccountConfirmedFeed (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:22:301)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+PASS changedAccountDuringFailureStillRejectsEntireStaleReply
+FAIL timedOutBodyCannotOverwriteNewRetry TypeError: Cannot read properties of undefined (reading 'status')
+    at timedOutBodyCannotOverwriteNewRetry (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:24:298)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+FAIL consumerMutationCannotPoisonRetainedCache TypeError: Cannot read properties of undefined (reading '0')
+    at consumerMutationCannotPoisonRetainedCache (/Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:25:206)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn-transactions/tests/espn-transactions.cjs:27:73
+18 ESPN transaction groups; 17 failed

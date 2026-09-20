@@ -1,0 +1,101 @@
+PASS completedDynastyKeepsAcceptedHorizon
+FAIL seasonalCapitalIsOnlyUnspentCurrentYear: 0
+
+48 !== 16
+
+FAIL canonicalOverridesAndBlankFieldsRetainNumericZero: Expected values to be strictly equal:
+
+12 !== 4
+
+FAIL unrelatedGlobalDraftCannotRetireCurrentRights: Expected values to be strictly equal:
+
+2027 !== 2026
+
+FAIL partialDraftConsumesOriginalSlotAfterTransfer: Expected values to be strictly equal:
+
+13 !== 12
+
+FAIL unavailableProgressIsNotFullCapitalOrDeficit: Cannot read properties of undefined (reading 'complete')
+FAIL failedOwnershipIsUnavailableRatherThanOriginalInventory: Expected values to be strictly equal:
++ actual - expected
+
++ {
++   draftRounds: 4,
++   idealTotal: 12,
++   pickCountByRound: {
++     '1': 3,
++     '2': 3,
++     '3': 3,
++     '4': 3
++   },
++   pickCountByYear: {
++     '2026': 4,
++     '2027': 4,
++     '2028': 4
++   },
++   pickCountByYearRound: {
++     '2026': {
++       '1': 1,
++       '2': 1,
++       '3': 1,
++       '4': 1
++     },
++     '2027': {
++       '1': 1,
++       '2': 1,
++       '3': 1,
++       '4': 1
++     },
++     '2028': {
++       '1': 1,
++       '2': 1,
++       '3': 1,
++       '4': 1
++     }
++   },
++   pickYears: [
++     '2026',
++     '2027',
++     '2028'
++   ],
++   roundsMissing: 0,
++   status: 'ok',
++   totalPicks: 12
++ }
+- null
+
+FAIL roundEvidenceDistinguishesStartupFromFutureRookieDrafts: Expected values to be strictly equal:
+
+12 !== 28
+
+FAIL mixedIdentifiersAndDuplicateRowsDoNotInventRights: Expected values to be strictly equal:
+
+12 !== 11
+
+FAIL sameCountTradeAndDraftProgressInvalidateMemoAndPin: Expected values to be strictly equal:
+
+12 !== 11
+
+PASS equivalentProviderOrderingKeepsTheStableAssessment
+FAIL lateCloudPinCannotReplaceAnotherLeagueOrPickState: late A response cannot overwrite B stable snapshot
++ actual - expected
+
++ '{"fp":"league-a|w|d2026-09-20|1:qb1.wr1:2-0-0;2:qb2.wr2:0-2-0;","data":[{"rosterId":1,"ownerId":"a","teamName":"Team 1","ownerName":"Owner 1","avatar":null,"wins":2,"losses":0,"ties":0,"pf":0,"posGroups":{"QB":["qb1"],"WR":["wr1"]},"posAssessment":{"QB":{"actual":1,"ideal":2,"diff":-1,"nflStarters":1,"nflStarterIds":["qb1"],"sortedIds":["qb1"],"startingReq":1,"minQuality":1,"projectedPts":20,"status":"ok"},"WR":{"actual":1,"ideal":2,"diff":-1,"nflStarters":0,"nflStarterIds":[],"sortedIds":["wr1"],"startingReq":1,"minQuality":1,"projectedPts":15,"status":"ok"}},"picksAssessment":{"pickCountByRound":{"1":3,"2":3,"3":3,"4":3},"pickCountByYear":{"2026":4,"2027":4,"2028":4},"pickCountByYearRound":{"2026":{"1":1,"2":1,"3":1,"4":1},"2027":{"1":1,"2":1,"3":1,"4":1},"2028":{"1":1,"2":1,"3":1,"4":1}},"totalPicks":12,"draftRounds":4,"idealTotal":12,"pickYears":["2026","2027","2028"],"roundsMissing":0,"status":"ok"},"weeklyPts":35,"healthScore":77,"tier":"CROSSROADS","tierColor":"#F0A500","tierBg":"rgba(240,165,0,0.12)","panic":1,"window":"TRANSITIONING","needs":[],"strengths":[],"faabRemaining":100,"waiverBudget":100,"faabMinBid":0,"totalDHQ":15000,"assetScore":100,"powerScore":86,"powerRank":1},{"rosterId":2,"ownerId":"b","teamName":"Team 2","ownerName":"Owner 2","avatar":null,"wins":0,"losses":2,"ties":0,"pf":0,"posGroups":{"QB":["qb2"],"WR":["wr2"]},"posAssessment":{"QB":{"actual":1,"ideal":2,"diff":-1,"nflStarters":0,"nflStarterIds":[],"sortedIds":["qb2"],"startingReq":1,"minQuality":1,"projectedPts":17,"status":"deficit"},"WR":{"actual":1,"ideal":2,"diff":-1,"nflStarters":0,"nflStarterIds":[],"sortedIds":["wr2"],"startingReq":1,"minQuality":1,"projectedPts":10,"status":"deficit"}},"picksAssessment":{"pickCountByRound":{"1":3,"2":3,"3":3,"4":3},"pickCountByYear":{"2026":4,"2027":4,"2028":4},"pickCountByYearRound":{"2026":{"1":1,"2":1,"3":1,"4":1},"2027":{"1":1,"2":1,"3":1,"4":1},"2028":{"1":1,"2":1,"3":1,"4":1}},"totalPicks":12,"draftRounds":4,"idealTotal":12,"pickYears":["2026","2027","2028"],"roundsMissing":0,"status":"ok"},"weeklyPts":27,"healthScore":44,"tier":"REBUILDING","tierColor":"#E74C3C","tierBg":"rgba(231,76,60,0.12)","panic":4,"window":"REBUILDING","needs":[{"pos":"QB","urgency":"deficit"},{"pos":"WR","urgency":"deficit"}],"strengths":[],"faabRemaining":100,"waiverBudget":100,"faabMinBid":0,"totalDHQ":10000,"assetScore":67,"powerScore":53,"powerRank":2}],"ts":1789923185021}'
+- '{"fp":"league-b|w|d2026-09-20|1:qb1.wr1:2-0-0;2:qb2.wr2:0-2-0;","data":[{"rosterId":1,"ownerId":"a","teamName":"Team 1","ownerName":"Owner 1","avatar":null,"wins":2,"losses":0,"ties":0,"pf":0,"posGroups":{"QB":["qb1"],"WR":["wr1"]},"posAssessment":{"QB":{"actual":1,"ideal":2,"diff":-1,"nflStarters":1,"nflStarterIds":["qb1"],"sortedIds":["qb1"],"startingReq":1,"minQuality":1,"projectedPts":20,"status":"ok"},"WR":{"actual":1,"ideal":2,"diff":-1,"nflStarters":0,"nflStarterIds":[],"sortedIds":["wr1"],"startingReq":1,"minQuality":1,"projectedPts":15,"status":"ok"}},"picksAssessment":{"pickCountByRound":{"1":3,"2":3,"3":3,"4":3},"pickCountByYear":{"2026":4,"2027":4,"2028":4},"pickCountByYearRound":{"2026":{"1":1,"2":1,"3":1,"4":1},"2027":{"1":1,"2":1,"3":1,"4":1},"2028":{"1":1,"2":1,"3":1,"4":1}},"totalPicks":12,"draftRounds":4,"idealTotal":12,"pickYears":["2026","2027","2028"],"roundsMissing":0,"status":"ok"},"weeklyPts":35,"healthScore":77,"tier":"CROSSROADS","tierColor":"#F0A500","tierBg":"rgba(240,165,0,0.12)","panic":1,"window":"TRANSITIONING","needs":[],"strengths":[],"faabRemaining":100,"waiverBudget":100,"faabMinBid":0,"totalDHQ":15000,"assetScore":100,"powerScore":86,"powerRank":1},{"rosterId":2,"ownerId":"b","teamName":"Team 2","ownerName":"Owner 2","avatar":null,"wins":0,"losses":2,"ties":0,"pf":0,"posGroups":{"QB":["qb2"],"WR":["wr2"]},"posAssessment":{"QB":{"actual":1,"ideal":2,"diff":-1,"nflStarters":0,"nflStarterIds":[],"sortedIds":["qb2"],"startingReq":1,"minQuality":1,"projectedPts":17,"status":"deficit"},"WR":{"actual":1,"ideal":2,"diff":-1,"nflStarters":0,"nflStarterIds":[],"sortedIds":["wr2"],"startingReq":1,"minQuality":1,"projectedPts":10,"status":"deficit"}},"picksAssessment":{"pickCountByRound":{"1":3,"2":3,"3":3,"4":3},"pickCountByYear":{"2026":4,"2027":4,"2028":4},"pickCountByYearRound":{"2026":{"1":1,"2":1,"3":1,"4":1},"2027":{"1":1,"2":1,"3":1,"4":1},"2028":{"1":1,"2":1,"3":1,"4":1}},"totalPicks":12,"draftRounds":4,"idealTotal":12,"pickYears":["2026","2027","2028"],"roundsMissing":0,"status":"ok"},"weeklyPts":27,"healthScore":44,"tier":"REBUILDING","tierColor":"#E74C3C","tierBg":"rgba(231,76,60,0.12)","panic":4,"window":"REBUILDING","needs":[{"pos":"QB","urgency":"deficit"},{"pos":"WR","urgency":"deficit"}],"strengths":[],"faabRemaining":100,"waiverBudget":100,"faabMinBid":0,"totalDHQ":10000,"assetScore":67,"powerScore":53,"powerRank":2}],"ts":1789923185021}'
+
+FAIL currentGlobalSeasonIsUsedOnlyForTheSelectedLeague: Expected values to be strictly deep-equal:
++ actual - expected
+
+  [
+-   '2024',
+-   '2025',
+    '2026',
++   '2027',
++   '2028'
+  ]
+
+FAIL mflPartialBoardUsesCurrentSlotOwner: Expected values to be strictly equal:
+
+12 !== 8
+
+PASS nonPickHealthRankAndInjuryContractsAreStable

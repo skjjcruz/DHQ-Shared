@@ -1,0 +1,8 @@
+PASS legacy connect publishes confirmed feed instead of an empty placeholder
+[Yahoo] transactions fetch failed: outage
+[Yahoo] transactions fetch failed: outage
+PASS unavailable initial feed and same-context reconnect retain truthful status
+PASS unconfirmed/restored plain state cannot adopt current account history
+PASS published scope retires across account, provider, league, season and state replacement
+PASS late transaction completion cannot publish after active account changes
+Yahoo Scout state: 5 passed, 0 failed

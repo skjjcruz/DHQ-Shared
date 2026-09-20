@@ -1,0 +1,28 @@
+FAIL legacy connect publishes confirmed feed instead of an empty placeholder TypeError: Cannot read properties of undefined (reading '0')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:9:206
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:7:76)
+    at async run (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:9:1)
+FAIL unavailable initial feed and same-context reconnect retain truthful status TypeError: Cannot read properties of undefined (reading 'status')
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:10:202
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:7:76)
+    at async run (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:10:1)
+FAIL unconfirmed/restored plain state cannot adopt current account history TypeError: x.api.isStateCurrent is not a function
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:11:131
+    at test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:7:82)
+    at run (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:11:7)
+FAIL published scope retires across account, provider, league, season and state replacement TypeError: x.api.isStateCurrent is not a function
+    at /Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:12:479
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:7:76)
+    at async run (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:12:1)
+FAIL late transaction completion cannot publish after active account changes AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async /Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:13:261
+    at async test (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:7:76)
+    at async run (/Users/jacobc/Projects/dhq-shared-readiness-yahoo-scout/tests/yahoo-scout-state.cjs:13:1) {
+  generatedMessage: false,
+  code: 'ERR_ASSERTION',
+  actual: undefined,
+  expected: /connection changed/,
+  operator: 'rejects',
+  diff: 'simple'
+}
+Yahoo Scout state: 0 passed, 5 failed

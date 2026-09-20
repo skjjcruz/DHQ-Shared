@@ -1,0 +1,37 @@
+Fixture listening http://127.0.0.1:56655
+Chrome launched
+Fixture loaded
+Browser [DHQ:sitMult] extreme raw multiplier {pid: 100, pos: QB, raw: 1.97, clamped: 1.6, factors: Object}
+Browser [DHQ:sitMult] extreme raw multiplier {pid: 104, pos: DL, raw: 1.97, clamped: 1.6, factors: Object}
+Background completed
+Browser [DHQ:sitMult] extreme raw multiplier {pid: 100, pos: QB, raw: 1.97, clamped: 1.6, factors: Object}
+Browser [DHQ:sitMult] extreme raw multiplier {pid: 104, pos: DL, raw: 1.97, clamped: 1.6, factors: Object}
+Browser LeagueIntel error: Error: League value loading was superseded by an account or league change.
+    at scope.check (http://127.0.0.1:56655/dhq-engine.js:101:46)
+    at _dhqBuildLeagueIntel (http://127.0.0.1:56655/dhq-engine.js:967:13)
+    at async window.run (http://127.0.0.1:56655/:15:252)
+Browser [DHQ:sitMult] extreme raw multiplier {pid: 100, pos: QB, raw: 1.97, clamped: 1.6, factors: Object}
+Browser [DHQ:sitMult] extreme raw multiplier {pid: 104, pos: DL, raw: 1.97, clamped: 1.6, factors: Object}
+{
+  "modules": [
+    "storage.js",
+    "dhq-core.js",
+    "pick-value-model.js",
+    "dhq-providers.js",
+    "points-ledger.js",
+    "one-brain.js",
+    "dhq-engine.js"
+  ],
+  "viewport": "390x844",
+  "checks": [
+    "explicit background context preserves active bridge",
+    "foreground values and actual one-brain",
+    "actual IndexedDB reload and matching cache adoption",
+    "real cross-tab account change cancels held cold work",
+    "same-view new-account retry succeeds"
+  ],
+  "externalWrites": 0,
+  "pageErrors": [],
+  "requests": 99,
+  "scope": "canonical modules in fixture shell; public product caller integration remains separate"
+}

@@ -1,0 +1,6 @@
+'use strict';
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),{execFileSync}=require('node:child_process');
+const {fixture}=require('../../../../tests/helpers/engine-fixture.cjs');
+const source=execFileSync('git',['-C','/Users/jacobc/Projects/reconai-readiness-scout-yahoo-transactions','show','8d6cf54:js/app.js'],{encoding:'utf8'});
+const start=source.indexOf('const pAge=id=>{'),end=source.indexOf('\nconst pExp=',start);assert(start>=0&&end>start);
+(async()=>{const old=fixture(execFileSync('git',['show','f72c8e4:dhq-engine.js'],{encoding:'utf8'})),now=fixture();for(const x of [old,now]){x.players['100'].age=null;x.players['100'].birth_date='1984-01-01';vm.runInContext(source.slice(start,end)+'\nwindow.App.pAge=pAge;',x.ctx);}await old.ctx.App.loadLeagueIntel();const result=await now.ctx.App.loadLeagueIntel();assert.notEqual(result.data.playerScores['100'],old.ctx.App.LI.playerScores['100']);console.log(JSON.stringify({finding:'replacement age helper drops actual Scout birth-date fallback',baseline:old.ctx.App.LI.playerScores['100'],candidate:result.data.playerScores['100'],actualScoutAge:old.ctx.App.pAge('100'),baselineMeta:old.ctx.App.LI.playerMeta['100'],candidateMeta:result.data.playerMeta['100']}));})().catch(e=>{console.error(e);process.exitCode=1;});

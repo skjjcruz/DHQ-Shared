@@ -1,0 +1,22 @@
+PASS selected key variants must agree before any network
+PASS selected season disagreement is not silently coerced
+PASS invalid key cannot become a provider query
+PASS foreign league metadata is rejected for every required response
+PASS missing season is not replaced with the current date
+PASS different provider year is rejected against selected season
+PASS parallel league parts cannot mix years when selection omitted season
+PASS missing metadata or resource body cannot produce default league
+PASS missing name, count or settings never invents a ten-team league
+PASS unrelated or partial settings cannot map to empty scoring and positions
+PASS empty or unusable player row cannot map to an empty roster
+PASS populated roster with split Yahoo metadata maps every confirmed player
+PASS short or duplicate team collection is incomplete
+PASS foreign team or inconsistent roster membership cannot publish
+PASS missing or truncated roster player collection is not an empty roster
+PASS foreign transaction identity is not swallowed as optional outage
+PASS invalid bundle is not cached and a valid retry fetches all required data
+PASS cached data must still match a subsequent selected season
+PASS confirmed historical season and documented explicit empty predraft rosters remain usable
+PASS documented NFL alias resolves to authenticated canonical game before fetching
+PASS NFL alias rejects unconfirmed game or a foreign season before league reads
+Yahoo league validation: 21 passed, 0 failed

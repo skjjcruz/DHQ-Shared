@@ -1,0 +1,16 @@
+PASS delayed A API data never resolves into current B
+PASS body parsing is fenced after account changes
+PASS new Yahoo session in same account invalidates a late response
+PASS hydrate account change stops follow-up transactions and raw cache
+PASS caller selection supersession stops hydration before mapping
+PASS account change during optional transactions cannot be swallowed
+PASS caller supersession during transactions prevents final publication
+PASS cached raw league cannot cross account boundary
+PASS cached raw league is invalidated by provider reconnect or same-token storage event
+PASS same context retains usable cache and ordinary mapped values
+PASS legacy connect cannot overwrite replaced active S or selected league
+PASS later legacy Yahoo connect supersedes earlier operation
+PASS legacy connect still writes confirmed current results
+[Yahoo] transactions fetch failed: provider outage
+PASS ordinary optional transaction outage preserves existing non-transaction result
+Yahoo data context: 14 passed, 0 failed

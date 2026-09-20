@@ -1,0 +1,3 @@
+PASS Chrome actual registry: incomplete core rejects, same-account retry restores the selected league
+PASS Chrome cross-tab account change: cached private raw cannot be mapped into the new account
+PASS Chrome legacy caller: delayed followup does not partially overwrite the replacement league

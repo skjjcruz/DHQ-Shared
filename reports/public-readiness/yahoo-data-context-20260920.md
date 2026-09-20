@@ -1,0 +1,13 @@
+# Yahoo private-data context follow-up — 2026-09-20
+
+Actual canonical shared branch codex/readiness-yahoo-data-context-20260920, based on frozen protocol2ba9248. No protocol/backend/consumer changes or deployment. Source-compatible follow-up must be merged into the final canonical revision and the Scout pin/artifact manifest regenerated before any coordinated release.
+
+High-severity reproduction: actual apiRequest began with accountA/provider-sessionA, current account changed toB, then the validA response resolved and returnedA's private league. Hydrate raw cache was keyed only by league key, so a subsequent account could map cachedA data. Optional transactions caught account errors before returning mapped stale data. Legacy connectLeague could overwrite S after its active league/account had changed.
+
+Correction: one captured app credential/account/version/provider-session/optional ctx.isCurrent spans all requests, raw-cache accesses and publication. Raw cache clears on identity, credential, provider-session or storage-boundary change. Optional transaction catches revalidate context before tolerating a provider outage. Legacy writes require the same S object/currentLeagueId, optional caller guard, and latest Yahoo connection generation. Existing valid same-context caching/mapping remains.
+
+Evidence: exact protocol-only baseline2ba9248 with new actual-module tests produced3passes/11failures ([before](evidence/yahoo-data-context-before.log)); corrected source14passes ([after](evidence/yahoo-data-context-after.log)). Protocol14groups also remain green. Chrome320routed fixture exercised delayed A response afterB sign-in and B's own raw fetch instead ofA cache,2passes ([browser](evidence/yahoo-data-context-browser.log)). No real provider accounts or hosted state were accessed. Full product/device evidence is not inferred from this fixture.
+
+Security agent independently reran14context+14protocolgroups and reviewed account/provider/caller/cache fences. They identified a separate material raw league/season identity gap: conflicting supplied keys and mismatched/incomplete provider metadata can still be mapped to the requested league. That validation is authorized as the next separate commit, and Yahoo release readiness remains held until reviewed. Positive later-connect fixture was corrected to supply the actual selected key; this batch does not claim league/season isolation.
+
+Existing transaction-provider failure still returns empty transactions without an explicit unavailable status. That truthfulness requirement remains open and is not described as a completed/empty history. The already-hidden public/native new-Yahoo UI and real Yahoo consent/read/write evidence also remain outside this bounded pass.

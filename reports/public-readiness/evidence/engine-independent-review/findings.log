@@ -1,0 +1,3 @@
+{"finding":"in-place player change ignored by ready shortcut","before":8539,"actualAfterAge42":8539,"expectedAfterAge42":3759}
+{"finding":"coalesced canceled explicit caller resolves successfully","samePromise":true,"receivedLeague":"111"}
+{"finding":"contradictory token owner A and cached user B adopts B cache","acceptedCache":true,"ready":true}

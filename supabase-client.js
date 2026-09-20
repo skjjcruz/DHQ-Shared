@@ -50,183 +50,245 @@ const _odFetchWithTimeout = function(url, opts, ms) {
 const SESSION_LS_KEY = 'od_session_v1';
 const FW_SESSION_KEY = 'fw_session_v1';
 
-function getSessionToken() {
-    // New email-based session (Dynasty HQ landing)
+// These checks establish client consistency only. The server remains the
+// authority for JWT signatures, session revocation and account permissions.
+const OD_SESSION_TIMEOUT_MS = 20000;
+let _sessionEpoch = 0;
+let _sessionObserved = null;
+let _sessionSync = null;
+let _sessionSigningOut = null;
+let _providerStorageEpoch = 0;
+const OD_PROVIDER_SESSION_KEY = (() => {
+    try { return 'sb-' + new URL(SUPABASE_URL).hostname.split('.')[0] + '-auth-token'; }
+    catch { return 'sb-unconfigured-auth-token'; }
+})();
+const OD_PROVIDER_KEYS = [OD_PROVIDER_SESSION_KEY, OD_PROVIDER_SESSION_KEY + '-code-verifier', OD_PROVIDER_SESSION_KEY + '-user'];
+
+function _sessionSnapshot() {
     try {
-        const raw = localStorage.getItem(FW_SESSION_KEY);
-        if (raw) {
-            const s = JSON.parse(raw);
-            // Reject clearly-expired JWTs so "has a token" means "has a usable
-            // token". The server validates exp too, but this keeps the client
-            // from issuing requests that RLS will reject and falling through to
-            // a confusing empty state instead of the localStorage fallback.
-            if (s?.token && !_jwtExpired(s.token)) return s.token;
+        const modern = localStorage.getItem(FW_SESSION_KEY);
+        const legacy = localStorage.getItem(SESSION_LS_KEY);
+        if (!_sessionObserved || modern !== _sessionObserved.modern || legacy !== _sessionObserved.legacy) {
+            _sessionEpoch++;
+            _sessionObserved = { modern, legacy };
         }
-    } catch {}
-    // Legacy Sleeper session
-    try {
-        const raw = localStorage.getItem(SESSION_LS_KEY);
-        if (!raw) return null;
-        const s = JSON.parse(raw);
-        if (!s?.token || !s?.expiresAt) return null;
-        if (Date.now() >= new Date(s.expiresAt).getTime() - 5 * 60 * 1000) return null;
-        return s.token;
+        return { modern, legacy, epoch: _sessionEpoch };
     } catch { return null; }
 }
-
-// Best-effort JWT expiry check. Returns true only when we can decode an `exp`
-// claim that is in the past (30s skew). Non-JWT / undecodable tokens are
-// treated as not-expired so we never reject a token we don't understand.
+function _sessionScopeCurrent(scope) {
+    const current = _sessionSnapshot();
+    return !!(scope && current && scope.epoch === current.epoch && scope.modern === current.modern && scope.legacy === current.legacy);
+}
+window.addEventListener('storage', event => {
+    if (event.key == null || event.key === FW_SESSION_KEY || event.key === SESSION_LS_KEY) _sessionEpoch++;
+    if (event.key == null || OD_PROVIDER_KEYS.includes(event.key)) _providerStorageEpoch++;
+});
+function _sessionJSON(raw) {
+    try { const value = JSON.parse(raw); return value && typeof value === 'object' && !Array.isArray(value) ? value : null; }
+    catch { return null; }
+}
+function _sessionClaims(token) {
+    try {
+        const parts = typeof token === 'string' ? token.split('.') : [];
+        if (parts.length !== 3 || parts.some(part => !part || !/^[A-Za-z0-9_-]+$/.test(part))) return null;
+        const claims = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        return claims && typeof claims.exp === 'number' && Number.isFinite(claims.exp) ? claims : null;
+    } catch { return null; }
+}
 function _jwtExpired(token) {
-    try {
-        const part = String(token).split('.')[1];
-        if (!part) return false;
-        const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'));
-        const claims = JSON.parse(json);
-        if (typeof claims?.exp !== 'number') return false;
-        return Date.now() >= (claims.exp * 1000) - 30 * 1000;
-    } catch { return false; }
+    const claims = _sessionClaims(token);
+    return !claims || Date.now() >= claims.exp * 1000 - 30000;
 }
-
+function _appRecordClaims(session, allowRepair) {
+    const claims = _sessionClaims(session?.token), meta = claims?.app_metadata;
+    if (!meta || typeof meta.user_id !== 'string' || !meta.user_id || claims.sub !== meta.user_id ||
+        !Number.isInteger(meta.session_version) || meta.session_version < 1 || _jwtExpired(session.token)) return null;
+    if (session?.user?.id != null && session.user.id !== meta.user_id) return null;
+    if (!allowRepair && session?.user?.id !== meta.user_id) return null;
+    return claims;
+}
+function _confirmedRefreshUser(data, claims) {
+    const user = data?.user, meta = claims?.app_metadata;
+    const products = value => Array.isArray(value) && value.every(item => typeof item === 'string') ? [...value].sort() : null;
+    const cachedProducts = products(user?.products), tokenProducts = products(meta?.products);
+    return !!(user && typeof user.tier === 'string' && user.tier && user.tier === meta?.tier &&
+        cachedProducts && tokenProducts && JSON.stringify(cachedProducts) === JSON.stringify(tokenProducts));
+}
+function _legacyRecord(scope) {
+    if (!scope || scope.modern !== null) return null;
+    const session = _sessionJSON(scope.legacy), claims = _sessionClaims(session?.token), meta = claims?.app_metadata;
+    const expires = Date.parse(session?.expiresAt);
+    if (!meta || Object.prototype.hasOwnProperty.call(meta, 'user_id') || Object.prototype.hasOwnProperty.call(meta, 'session_version') ||
+        typeof meta.sleeper_username !== 'string' || !meta.sleeper_username || claims.sub !== meta.sleeper_username ||
+        !Number.isFinite(expires) || Date.now() >= expires - 300000 || _jwtExpired(session.token)) return null;
+    return { session, username: meta.sleeper_username };
+}
+function getSessionToken() {
+    const scope = _sessionSnapshot();
+    if (!scope) return null;
+    // Presence is authoritative, including malformed/empty modern storage.
+    // A broken modern record must not silently resurrect a different legacy user.
+    if (scope.modern !== null) {
+        const session = _sessionJSON(scope.modern);
+        return _appRecordClaims(session, true) ? session.token : null;
+    }
+    return _legacyRecord(scope)?.session.token || null;
+}
 function getAppSession() {
-    try {
-        const raw = localStorage.getItem(FW_SESSION_KEY);
-        const session = raw ? JSON.parse(raw) : null;
-        // Expired tokens are rejected here for the same reason as in
-        // getSessionToken(): "has a session" must mean "has a usable session",
-        // otherwise callers fire doomed requests, hit 401, and silently
-        // resolve the account to the free tier instead of re-authing.
-        if (session?.token && session?.user?.id && !_jwtExpired(session.token)) return session;
-    } catch {}
-    return null;
+    const scope = _sessionSnapshot(), session = _sessionJSON(scope?.modern);
+    return _appRecordClaims(session, false) ? session : null;
 }
-
-// A dead session (expired locally, or revoked/rejected by the server) must
-// not linger in storage: every gate that sees a token treats the user as
-// signed in, so a rotten token reads as "signed in but free tier" forever.
-// Clearing it routes the user through the normal sign-in recovery path on
-// the next gate check. Apps that want to show a "session expired" notice
-// can listen for the event.
-function _clearDeadAppSession(reason) {
-    let email = null;
+function _clearDeadAppSession(reason, scope) {
+    if (!_sessionScopeCurrent(scope)) return false;
+    const email = _sessionJSON(scope.modern)?.user?.email || null;
     try {
-        const raw = localStorage.getItem(FW_SESSION_KEY);
-        email = raw ? (JSON.parse(raw)?.user?.email || null) : null;
-    } catch {}
-    try { localStorage.removeItem(FW_SESSION_KEY); } catch {}
-    _supabase = null;
-    _supabaseToken = null;
-    try {
-        window.dispatchEvent(new CustomEvent('dhq:session-expired', { detail: { reason, email } }));
-    } catch {}
+        // Clear the older fallback first; a failed modern removal then remains
+        // fail-closed instead of exposing the legacy account on the next call.
+        localStorage.removeItem(SESSION_LS_KEY);
+        localStorage.removeItem(FW_SESSION_KEY);
+        if (localStorage.getItem(FW_SESSION_KEY) !== null || localStorage.getItem(SESSION_LS_KEY) !== null) return false;
+    } catch { return false; }
+    _sessionSnapshot();
+    _resetSupabase();
+    try { window.dispatchEvent(new CustomEvent('dhq:session-expired', { detail: { reason, email } })); } catch {}
+    return true;
 }
-
-// Age of the token's `iat` claim in hours; null when undecodable.
 function _jwtAgeHours(token) {
-    try {
-        const part = String(token).split('.')[1];
-        if (!part) return null;
-        const claims = JSON.parse(atob(part.replace(/-/g, '+').replace(/_/g, '/')));
-        if (typeof claims?.iat !== 'number') return null;
-        return (Date.now() - claims.iat * 1000) / 3600000;
-    } catch { return null; }
+    const claims = _sessionClaims(token);
+    return typeof claims?.iat === 'number' && Number.isFinite(claims.iat) ? (Date.now() - claims.iat * 1000) / 3600000 : null;
 }
-
-// ── Session self-repair + sliding renewal ─────────────────────
-// App JWTs live 7 days. This runs once per page load (memoized) before the
-// first profile read and calls fw-refresh-session when the stored session
-// either (a) is missing its user record — the pre-fix Google OAuth pages
-// saved sessions without user.id, permanently locking those accounts to the
-// free tier — or (b) carries a token more than a day old, so any visit
-// inside the 7-day window slides the session forward and re-stamps
-// tier/products from the live subscription. Expired tokens are cleared —
-// refresh cannot resurrect them, and leaving them in storage strands the
-// user in a signed-in-but-free limbo — so sign-in becomes the recovery path.
-//
-// Memoized per stored token, not per page load: SPA-style sign-in (or an
-// OAuth callback that lands after boot already ran) swaps the stored session
-// without a reload, and a page-load memo would keep serving the stale
-// pre-sign-in result — every profile read would resolve free until a manual
-// refresh.
-let _sessionSyncPromise = null;
-let _sessionSyncToken = null;
-function _storedSessionToken() {
-    try {
-        const raw = localStorage.getItem(FW_SESSION_KEY);
-        return raw ? (JSON.parse(raw)?.token || null) : null;
-    } catch { return null; }
+async function _sessionBounded(work) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => {
+            controller?.abort();
+            const error = new Error('The account request timed out. Please try again.');
+            error.timedOut = true;
+            reject(error);
+        }, OD_SESSION_TIMEOUT_MS);
+    });
+    try { return await Promise.race([work(controller?.signal), timeout]); }
+    finally { clearTimeout(timer); }
 }
-function ensureFreshAppSession() {
-    const currentToken = _storedSessionToken();
-    if (_sessionSyncPromise && _sessionSyncToken === currentToken) return _sessionSyncPromise;
-    _sessionSyncToken = currentToken;
-    _sessionSyncPromise = (async () => {
+function _sessionRequest(url, options) {
+    // Deadline includes response parsing, not only arrival of the headers.
+    return _sessionBounded(async signal => {
+        const response = await fetch(url, { ...options, ...(signal ? { signal } : {}) });
+        const data = response.ok ? await response.json() : null;
+        return { response, data };
+    });
+}
+function _currentAppRecord(scope) {
+    const session = _sessionJSON(scope?.modern);
+    return _sessionScopeCurrent(scope) && _appRecordClaims(session, false) ? { session, scope } : null;
+}
+function _freshAppSessionRecord() {
+    const scope = _sessionSnapshot();
+    if (!scope || scope.modern === null || (_sessionSigningOut && _sessionScopeCurrent(_sessionSigningOut))) return Promise.resolve(null);
+    if (_sessionSync && _sessionScopeCurrent(_sessionSync.scope)) return _sessionSync.promise;
+    const entry = { scope, promise: null };
+    entry.promise = (async () => {
+        const session = _sessionJSON(scope.modern);
+        if (!session?.token) return null;
+        if (_jwtExpired(session.token)) { _clearDeadAppSession('expired', scope); return null; }
+        const claims = _appRecordClaims(session, true);
+        if (!claims) return null;
+        const age = _jwtAgeHours(session.token);
+        if (session.user?.id && age !== null && age <= 24) return _currentAppRecord(scope);
         try {
-            const raw = localStorage.getItem(FW_SESSION_KEY);
-            const session = raw ? JSON.parse(raw) : null;
-            if (!session?.token) return null;
-            if (_jwtExpired(session.token)) {
-                _clearDeadAppSession('expired');
-                _sessionSyncToken = null;
-                return null;
-            }
-            const needsRepair = !session?.user?.id;
-            const age = _jwtAgeHours(session.token);
-            const stale = age === null || age > 24;
-            if (!needsRepair && !stale) return getAppSession();
-            const resp = await fetch(BACKEND_ENDPOINTS.fwRefreshSession, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${session.token}`,
-                    'apikey': SUPABASE_ANON,
-                },
+            const { response, data } = await _sessionRequest(BACKEND_ENDPOINTS.fwRefreshSession, {
+                method: 'POST', headers: { Authorization: `Bearer ${session.token}`, apikey: SUPABASE_ANON },
             });
-            if (resp.ok) {
-                const data = await resp.json();
-                if (data?.token && data?.user?.id) {
-                    const next = Object.assign({}, session, {
-                        token: data.token,
-                        user: Object.assign({}, session.user || {}, data.user),
-                    });
-                    localStorage.setItem(FW_SESSION_KEY, JSON.stringify(next));
-                    // Re-key the memo to the token we just wrote, so the next
-                    // caller in this page load hits the cache instead of
-                    // treating the slide itself as a session change.
-                    _sessionSyncToken = data.token;
-                    _supabase = null;
-                    _supabaseToken = null;
-                }
-            } else if (resp.status === 401) {
-                // Revoked (session_version bump) or otherwise rejected: the
-                // token can never work again, so clear it — a lingering dead
-                // token reads as "signed in but free" at every gate.
-                _clearDeadAppSession('revoked');
-                _sessionSyncToken = null;
-                return null;
+            if (!_sessionScopeCurrent(scope)) return null;
+            if (response.status === 401) { _clearDeadAppSession('revoked', scope); return null; }
+            if (response.ok) {
+                const nextClaims = _appRecordClaims(data, false);
+                if (!nextClaims || !_confirmedRefreshUser(data, nextClaims) || nextClaims.sub !== claims.sub || nextClaims.app_metadata.session_version !== claims.app_metadata.session_version) return null;
+                const next = { ...session, token: data.token, user: { ...session.user, ...data.user } };
+                localStorage.setItem(FW_SESSION_KEY, JSON.stringify(next));
+                const nextScope = _sessionSnapshot();
+                if (nextScope?.modern !== JSON.stringify(next)) return null;
+                _resetSupabase();
+                return { session: next, scope: nextScope };
             }
-        } catch { /* network hiccup — try again next page load */ }
-        return getAppSession();
-    })();
-    return _sessionSyncPromise;
+        } catch { /* Keep a valid same-account session; a later call can retry. */ }
+        return _currentAppRecord(scope);
+    })().finally(() => { if (_sessionSync === entry) _sessionSync = null; });
+    _sessionSync = entry;
+    return entry.promise;
+}
+async function ensureFreshAppSession() {
+    const result = await _freshAppSessionRecord();
+    return result && _sessionScopeCurrent(result.scope) ? result.session : null;
 }
 
 // ── Bootstrap Supabase client ─────────────────────────────────
 let _supabase = null;
 let _supabaseToken = null;
+let _supabaseRetire = null;
 
+function _resetSupabase() {
+    const previous = _supabase;
+    _supabaseRetire?.();
+    _supabaseRetire = null;
+    _supabase = null;
+    _supabaseToken = null;
+    // Stopping the timer does not cancel an already pending SDK refresh.
+    // Its captured storage adapter below also blocks any late persistence.
+    try { Promise.resolve(previous?.auth?.stopAutoRefresh?.()).catch(() => {}); } catch {}
+}
+function _scopedProviderStorage(scope) {
+    let active = true;
+    const epoch = _providerStorageEpoch;
+    const expected = new Map(OD_PROVIDER_KEYS.map(key => [key, localStorage.getItem(key)]));
+    const current = () => {
+        if (!active) return false;
+        try {
+            if (epoch === _providerStorageEpoch && _sessionScopeCurrent(scope) &&
+                OD_PROVIDER_KEYS.every(key => localStorage.getItem(key) === expected.get(key))) return true;
+        } catch { /* Inaccessible storage cannot authorize persistence. */ }
+        active = false; // An observed replacement cannot revive after A → B → A.
+        return false;
+    };
+    return {
+        current,
+        retire() { active = false; },
+        storage: {
+            getItem(key) { return expected.has(key) && current() ? localStorage.getItem(key) : null; },
+            setItem(key, value) {
+                if (!expected.has(key) || !current()) return;
+                localStorage.setItem(key, value);
+                expected.set(key, String(value));
+            },
+            removeItem(key) {
+                if (!expected.has(key) || !current()) return;
+                localStorage.removeItem(key);
+                expected.set(key, null);
+            },
+        },
+    };
+}
 function getClient() {
     if (typeof window.supabase === 'undefined') {
         console.warn('[FW] Supabase CDN not loaded — falling back to localStorage only');
         return null;
     }
     const token = getSessionToken();
-    if (_supabase && _supabaseToken === token) return _supabase;
-    const opts = token
-        ? { global: { headers: { Authorization: `Bearer ${token}` } } }
-        : {};
-    _supabase      = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON, opts);
-    _supabaseToken = token;
-    return _supabase;
+    if (_supabase && _supabaseToken === token && _supabaseRetire?.isCurrent()) return _supabase;
+    _resetSupabase();
+    try {
+        const scope = _sessionSnapshot();
+        if (!scope) return null;
+        const provider = _scopedProviderStorage(scope);
+        const opts = { auth: { storageKey: OD_PROVIDER_SESSION_KEY, storage: provider.storage },
+            global: { headers: { Authorization: `Bearer ${token || SUPABASE_ANON}` } } };
+        _supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON, opts);
+        _supabaseToken = token;
+        _supabaseRetire = provider.retire;
+        _supabaseRetire.isCurrent = provider.current;
+        return _supabase;
+    } catch { _resetSupabase(); return null; }
 }
 
 function isConfigured() {
@@ -261,14 +323,8 @@ function getAnalyticsUsername() {
 // fw_session_v1.user.id). This is the security principal for direct DB
 // writes; the Sleeper username is non-security "which league" metadata.
 function getCurrentUserId() {
-    try {
-        const raw = localStorage.getItem(FW_SESSION_KEY);
-        if (raw) {
-            const s = JSON.parse(raw);
-            if (s?.user?.id) return s.user.id;
-        }
-    } catch {}
-    return null;
+    const scope = _sessionSnapshot(), session = _sessionJSON(scope?.modern);
+    return _appRecordClaims(session, true)?.sub || null;
 }
 
 // Which owner columns a row should carry. Account session wins and forces
@@ -287,7 +343,7 @@ function getOwnerIdentity() {
     const userId = getCurrentUserId();
     if (userId) return { userId, username: null };
     const username = getCurrentUsername();
-    if (username) return { userId: null, username };
+    if (username && _legacyRecord(_sessionSnapshot())?.username === username) return { userId: null, username };
     return { userId: null, username: null };
 }
 
@@ -345,8 +401,7 @@ window.OD.acquireSessionToken = async function(username, password) {
         const session = await resp.json();
         if (!session?.token) return null;
         localStorage.setItem(SESSION_LS_KEY, JSON.stringify(session));
-        _supabase = null;
-        _supabaseToken = null;
+        _resetSupabase();
         return session;
     } catch { return null; }
 };
@@ -466,53 +521,35 @@ window.OD.saveProfile = async function(profile) {
 };
 
 window.OD.loadProfile = async function() {
-    // Repair/renew the stored session first: pre-fix Google OAuth sessions
-    // lack user.id (getAppSession() rejects them → silent free-tier fallback),
-    // and week-old tokens need sliding before fw-profile will accept them.
-    const appSession = isConfigured() ? await ensureFreshAppSession() : getAppSession();
-    if (appSession?.token && isConfigured()) {
+    const initial = _sessionSnapshot();
+    if (!initial || !isConfigured()) return null;
+    if (initial.modern !== null) {
+        const current = await _freshAppSessionRecord();
+        if (!current || !_sessionScopeCurrent(current.scope)) return null;
+        const { session, scope } = current;
         try {
-            const resp = await fetch(BACKEND_ENDPOINTS.fwProfile, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${appSession.token}`,
-                    'apikey': SUPABASE_ANON,
-                },
+            const { response, data } = await _sessionRequest(BACKEND_ENDPOINTS.fwProfile, {
+                method: 'GET', headers: { Authorization: `Bearer ${session.token}`, apikey: SUPABASE_ANON },
             });
-            if (resp.ok) {
-                const data = await resp.json();
-                const user = data?.user || {};
-                return {
-                    tier: user.tier || 'free',
-                    products: Array.isArray(user.products) ? user.products : [],
-                    platforms: data?.platformUsernames || {},
-                    onboardingComplete: true,
-                };
-            }
-            if (resp.status === 401) {
-                // The server rejected a token that passed the local expiry
-                // check — revoked or signed with a rotated secret. Dead either
-                // way; clear it so the user is routed to sign-in instead of
-                // being silently resolved to the free tier on every load.
-                _clearDeadAppSession('revoked');
-            }
-        } catch {}
+            if (!_sessionScopeCurrent(scope)) return null;
+            if (response.status === 401) { _clearDeadAppSession('revoked', scope); return null; }
+            const user = data?.user;
+            if (!response.ok || user?.id !== session.user.id || typeof user?.tier !== 'string' || !user.tier ||
+                !Array.isArray(user.products) || user.products.some(value => typeof value !== 'string') ||
+                !isPlainObject(data.platformUsernames)) return null;
+            return { tier: user.tier, products: user.products, platforms: data.platformUsernames, onboardingComplete: true };
+        } catch { return null; }
     }
-
-    const username = getCurrentUsername();
+    const legacy = _legacyRecord(initial), username = getCurrentUsername();
+    if (!legacy || username !== legacy.username) return null;
     const db = getClient();
-    if (!db || !isConfigured() || !username) return null;
-    const { data, error } = await db
-        .from('users')
-        .select('tier, fantasy_platforms, onboarding_complete')
-        .eq('sleeper_username', username)
-        .maybeSingle();
-    if (error || !data) return null;
-    return {
-        tier:               data.tier               || 'free',
-        platforms:          data.fantasy_platforms  || ['sleeper'],
-        onboardingComplete: data.onboarding_complete || false,
-    };
+    if (!db) return null;
+    try {
+        const { data, error } = await _sessionBounded(() => db.from('users')
+            .select('tier, fantasy_platforms, onboarding_complete').eq('sleeper_username', username).maybeSingle());
+        if (!_sessionScopeCurrent(initial) || getCurrentUsername() !== username || error || !data) return null;
+        return { tier: data.tier || 'free', platforms: data.fantasy_platforms || ['sleeper'], onboardingComplete: data.onboarding_complete || false };
+    } catch { return null; }
 };
 
 window.OD.savePlatformUsernames = async function(platformUsernames) {
@@ -2216,11 +2253,48 @@ window.OD.signInWithApple = function() {
 };
 
 window.OD.signOut = async function() {
-    const client = getClient();
-    if (client) await client.auth.signOut().catch(() => {});
-    localStorage.removeItem(SESSION_LS_KEY);
-    localStorage.removeItem(FW_SESSION_KEY);
-    window.location.reload();
+    const before = _sessionSnapshot();
+    if (!before) return { signedOut: false, reason: 'storage' };
+    _sessionEpoch++; // Cancel earlier refresh/profile work even before storage changes.
+    const scope = _sessionSnapshot();
+    _sessionSigningOut = scope;
+    _resetSupabase();
+    let providerToken = null, after;
+    try {
+        const provider = OD_PROVIDER_KEYS.map(key => [key, localStorage.getItem(key), sessionStorage.getItem(key)]);
+        providerToken = _sessionJSON(provider[0][1])?.access_token || null;
+        if (!_sessionScopeCurrent(scope)) return { signedOut: false, reason: 'account-changed' };
+        for (const [key, local, tab] of provider) {
+            if (localStorage.getItem(key) !== local || sessionStorage.getItem(key) !== tab) return { signedOut: false, reason: 'account-changed' };
+        }
+        // No asynchronous persistent SDK signOut: its cleanup can erase a
+        // newer provider session. Remove only the captured keys synchronously.
+        for (const [key] of provider) { localStorage.removeItem(key); sessionStorage.removeItem(key); }
+        localStorage.removeItem(SESSION_LS_KEY);
+        localStorage.removeItem(FW_SESSION_KEY);
+        if (localStorage.getItem(FW_SESSION_KEY) !== null || localStorage.getItem(SESSION_LS_KEY) !== null) return { signedOut: false, reason: 'storage' };
+        after = _sessionSnapshot();
+    } catch { return { signedOut: false, reason: 'storage' }; }
+    finally { if (_sessionSigningOut === scope) _sessionSigningOut = null; }
+    let providerSignedOut = true;
+    if (typeof providerToken === 'string' && providerToken) {
+        try {
+            const response = await _sessionBounded(signal => fetch(SUPABASE_URL + '/auth/v1/logout?scope=global', {
+                method: 'POST', ...(signal ? { signal } : {}), headers: { apikey: SUPABASE_ANON, Authorization: 'Bearer ' + providerToken },
+            }));
+            providerSignedOut = response.ok || [401, 403, 404].includes(response.status);
+        } catch { providerSignedOut = false; }
+    }
+    // Account B may have signed in while A's provider logout was pending.
+    // Do not redirect/reload that newer account or touch its storage.
+    const unchanged = _sessionScopeCurrent(after) && OD_PROVIDER_KEYS.every(key => localStorage.getItem(key) === null);
+    if (unchanged) {
+        if (!providerSignedOut) {
+            try { window.dispatchEvent(new CustomEvent('dhq:signout-incomplete', { detail: { localSignedOut: true, providerSignedOut: false } })); } catch {}
+        }
+        window.location.reload();
+    }
+    return { signedOut: true, providerSignedOut, superseded: !unchanged };
 };
 
 window.OD.getOAuthSession = async function() {

@@ -38,6 +38,7 @@ const SleeperProvider = {
   name: 'sleeper',
 
   async getLeagueChain(leagueId, currentSeason) {
+    const fetch = this._context?.fetch || window.fetch.bind(window);
     const chain = [];
     let lid = leagueId;
     while (lid) {
@@ -50,7 +51,8 @@ const SleeperProvider = {
   },
 
   async getDraftPicks(chainEntry) {
-    const S = window.App.S || window.S;
+    const fetch = this._context?.fetch || window.fetch.bind(window);
+    const S = this._context?.state || window.App.S || window.S;
     const posMapLocal = p => { if (['DE','DT'].includes(p)) return 'DL'; if (['CB','S'].includes(p)) return 'DB'; return p; };
     const drafts = await fetch(`${SLEEPER_BASE}/league/${chainEntry.id}/drafts`).then(r => r.json()).catch(() => []);
     const completed = (drafts || []).filter(d => d.draft_id && d.status === 'complete');
@@ -75,8 +77,9 @@ const SleeperProvider = {
   },
 
   async getTransactions(chainEntry, currentSeason) {
-    const S = window.App.S || window.S;
-    const pPos = window.App.pPos || window.pPos || (id => S?.players?.[id]?.position || '');
+    const fetch = this._context?.fetch || window.fetch.bind(window);
+    const S = this._context?.state || window.App.S || window.S;
+    const pPos = this._context ? (id => S?.players?.[id]?.position || '') : (window.App.pPos || window.pPos || (id => S?.players?.[id]?.position || ''));
     const posMapLocal = p => { if (['DE','DT'].includes(p)) return 'DL'; if (['CB','S'].includes(p)) return 'DB'; return p; };
     const positions = ['QB','RB','WR','TE','DL','LB','DB'];
     const trades = [];
@@ -110,6 +113,7 @@ const SleeperProvider = {
   },
 
   async getBracket(chainEntry) {
+    const fetch = this._context?.fetch || window.fetch.bind(window);
     const [winners, losers] = await Promise.all([
       fetch(`${SLEEPER_BASE}/league/${chainEntry.id}/winners_bracket`).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch(`${SLEEPER_BASE}/league/${chainEntry.id}/losers_bracket`).then(r => r.ok ? r.json() : []).catch(() => []),
@@ -118,11 +122,13 @@ const SleeperProvider = {
   },
 
   async getLeagueUsers(chainEntry) {
+    const fetch = this._context?.fetch || window.fetch.bind(window);
     const users = await fetch(`${SLEEPER_BASE}/league/${chainEntry.id}/users`).then(r => r.ok ? r.json() : []).catch(() => []);
     return (users || []).map(u => ({ user_id: u.user_id, display_name: u.display_name || u.username, avatar: u.avatar }));
   },
 
   async refreshTrades(chainEntry) {
+    const fetch = this._context?.fetch || window.fetch.bind(window);
     const trades = [];
     const weeks = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18];
     await Promise.all(weeks.map(w =>
@@ -150,11 +156,15 @@ const MFLProvider = {
   name: 'mfl',
 
   _getMflConfig() {
-    const S = window.App.S || window.S;
+    const S = this._context?.state || window.App.S || window.S;
     // Extract raw MFL league ID from our prefixed ID (mfl_41969_2026 → 41969)
     // Also handles hash fragments like mfl_41969#0_2026
     const rawId = (S?.mflLeagueId || '').replace(/^mfl_/, '').replace(/#.*$/, '') || S?.currentLeagueId?.replace(/^mfl_(\d+)[#_].*$/, '$1') || '';
     const apiKey = S?._mflApiKey || '';
+    if(this._context){
+      const selected=String(S?.currentLeagueId||'').match(/^mfl_(\d+)(?:#\d+)?_(\d{4})$/);
+      if(!selected||String(rawId)!==selected[1]||String(S?.season)!==selected[2])throw new Error('The selected MFL league and connection do not match.');
+    }
     return { rawId, apiKey };
   },
 
@@ -166,6 +176,7 @@ const MFLProvider = {
   },
 
   async _mflGet(url) {
+    const fetch = this._context?.fetch || window.fetch.bind(window);
     // MFL blocks all cross-origin requests — route through our Edge Function proxy.
     // Supabase's gateway requires Authorization + apikey headers even for public
     // functions (verify_jwt defaults to true) — pass the anon key when there's
@@ -175,7 +186,7 @@ const MFLProvider = {
     const base    = config.functionsBase || (supabaseBase ? supabaseBase + '/functions/v1' : '');
     const endpoint = config.endpoints?.mflProxy || (base ? base + '/mfl-proxy' : null);
     const anonKey = config.supabaseAnon || window.OD?.SUPABASE_ANON || window.App?.SUPABASE_ANON;
-    const token   = window.OD?.getSessionToken?.() || null;
+    const token   = this._context ? this._context.token : (window.OD?.getSessionToken?.() || null);
     if (endpoint && anonKey) {
       try {
         const res = await fetch(endpoint, {
@@ -228,8 +239,8 @@ const MFLProvider = {
       const units = data?.draftResults?.draftUnit;
       if (!units) return [];
       const unitArr = Array.isArray(units) ? units : [units];
-      const cw = window.MFL?._crosswalk || {};
-      const S = window.App.S || window.S;
+      const cw = this._context?.mflCrosswalk || window.MFL?._crosswalk || {};
+      const S = this._context?.state || window.App.S || window.S;
       const picks = [];
       unitArr.forEach(unit => {
         const dpicks = unit?.draftPick || [];
@@ -261,7 +272,7 @@ const MFLProvider = {
       const data = await this._mflGet(this._mflUrl(yr, 'transactions', mflId, apiKey));
       const txnArr = data?.transactions?.transaction || [];
       const txns = Array.isArray(txnArr) ? txnArr : [txnArr];
-      const cw = window.MFL?._crosswalk || {};
+      const cw = this._context?.mflCrosswalk || window.MFL?._crosswalk || {};
       const trades = [];
 
       txns.filter(t => t?.type === 'TRADE').forEach(t => {
@@ -376,8 +387,26 @@ const providers = {
   yahoo: YahooProvider,
 };
 
-function getProvider(platform) {
-  return providers[(platform || 'sleeper').toLowerCase()] || SleeperProvider;
+function getProvider(platform, context) {
+  const provider = providers[(platform || 'sleeper').toLowerCase()];
+  if (!context) return provider || SleeperProvider;
+  if (!provider) throw new Error('This league provider is not supported by the value engine.');
+  const check = () => { if (context.isCurrent && !context.isCurrent()) throw new Error('The league or account changed.'); };
+  check();
+  const bound = Object.create(provider);
+  bound._context = { ...context, token: window.OD?.getSessionToken?.() || null, mflCrosswalk: { ...(window.MFL?._crosswalk || {}) } };
+  const read = context.fetch || window.fetch.bind(window);
+  bound._context.fetch = async (...args) => {
+    check();const response = await read(...args);check();
+    return {ok:response.ok,status:response.status,json:async()=>{check();const data=await response.json();check();return data;}};
+  };
+  // Binding every method protects provider-internal chains as well as engine
+  // phase boundaries. A caught stale response cannot start another request.
+  Object.keys(provider).forEach(key => {
+    if (typeof provider[key] !== 'function') return;
+    bound[key] = function(...args) { check(); const value=provider[key].apply(this,args); if(value&&typeof value.then==='function')return value.then(result=>{check();return result;});check();return value; };
+  });
+  return bound;
 }
 
 window.DhqProviders = { getProvider, SleeperProvider, MFLProvider, ESPNProvider, YahooProvider };
