@@ -1,0 +1,12 @@
+
+> owner-dashboard-v6@1.0.0 build:preview
+> npm run sync:shared && node scripts/build-preview.cjs
+
+
+> owner-dashboard-v6@1.0.0 sync:shared
+> node scripts/sync-reconai-shared.cjs
+
+[sync-reconai-shared] Vendored 44 modules into reconai-shared/ and refreshed 3 data files from /Users/jacobc/Projects/dhq-shared-readiness-actual-capital
+Compiled 70 Babel scripts into dist-preview/
+(node:77834) Warning: `--localstorage-file` was provided without a valid path
+(Use `node --trace-warnings ...` to show where the warning was created)

@@ -782,6 +782,9 @@ function mapDraftStatus(draftResultsRaw, leagueId, year, league, crosswalk) {
       slot_to_roster_id,
       picks: made,
       _slots: slots,
+      // These dimensions describe this payload, not independently configured
+      // board coverage. Consumers must not use them to certify completeness.
+      _dimensionsInferred: true,
       on_the_clock: onClock ? onClock.roster_id : null,
       _source: 'mfl',
     };

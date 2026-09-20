@@ -1,0 +1,15 @@
+{
+  "consumer": "actual public MarketRadarWidget",
+  "viewport": "1200x780",
+  "externalMutationGuard": true,
+  "checks": [
+    "seasonal current-year count",
+    "changed ownership after reopening",
+    "saved-pin reload recovery",
+    "unknown feed without invented count",
+    "spent seasonal capital retired",
+    "completed dynasty accepted horizon",
+    "existing Trades handoff"
+  ],
+  "pageErrors": []
+}
