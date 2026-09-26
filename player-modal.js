@@ -344,8 +344,29 @@ function _fwEnsureCareerPhoneCss() {
     .fwpm-career-tbl .fwpm-career-row{grid-template-columns:var(--fwpm-cols-ph)!important;column-gap:10px!important;min-width:max-content;white-space:nowrap}
     .fwpm-career-tbl .fwpm-career-row>:first-child{position:sticky;left:0;z-index:1;padding-right:6px;background:var(--fwpm-career-sticky-bg,transparent)}
     .fwpm-career-tbl.is-scrolled .fwpm-career-row>:first-child{box-shadow:6px 0 6px -4px rgba(0,0,0,.65)}
+    .fwpm-career-tbl.fw-more-r{-webkit-mask-image:linear-gradient(to right,#000 calc(100% - 36px),rgba(0,0,0,.12));mask-image:linear-gradient(to right,#000 calc(100% - 36px),rgba(0,0,0,.12))}
   }`;
   document.head.appendChild(st);
+  // Right-edge peek: when more columns sit off to the right (QB rows end
+  // exactly at the edge on a 390px phone, hiding TD/INT/RUSH/FPTS), fade the
+  // last ~36px so the table reads as "swipe for more"; the class clears at
+  // scroll end or when the table fits. Hosts insert the table HTML string
+  // themselves, so pick new tables up via a light MutationObserver sweep and
+  // re-measure on resize (hidden tab → shown) with a ResizeObserver.
+  const edge = (t) => { if (t && t.classList) t.classList.toggle('fw-more-r', t.scrollWidth - t.clientWidth - t.scrollLeft > 2); };
+  let ro = null;
+  try { if (typeof ResizeObserver === 'function') ro = new ResizeObserver(es => es.forEach(e => edge(e.target))); } catch (err) {}
+  const tbls = document.getElementsByClassName('fwpm-career-tbl');
+  const sweep = () => {
+    for (let i = 0; i < tbls.length; i++) {
+      const t = tbls[i];
+      if (t.dataset.fwEdge) continue;
+      t.dataset.fwEdge = '1';
+      if (ro) ro.observe(t); else edge(t);
+    }
+  };
+  try { new MutationObserver(sweep).observe(document.body || document.documentElement, { childList: true, subtree: true }); } catch (err) {}
+  setTimeout(sweep, 0);
   // The sticky YR cell only overlaps other cells once the table scrolls, so
   // resolve an opaque backdrop for it lazily on first scroll: composite the
   // ancestors' background colours down to the first opaque one. Hosts can
@@ -354,6 +375,7 @@ function _fwEnsureCareerPhoneCss() {
     const t = e.target;
     if (!t || !t.classList || !t.classList.contains('fwpm-career-tbl')) return;
     t.classList.toggle('is-scrolled', t.scrollLeft > 0);
+    edge(t);
     if (t.dataset.fwBg) return;
     t.dataset.fwBg = '1';
     try {
