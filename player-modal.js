@@ -245,6 +245,17 @@ function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
   else cols = [{k:'gp',l:'GP'},{k:'ppg',l:'PPG'},{k:'fpts',l:'FPTS'}];
 
   const gridCols = `38px ${cols.map(() => '1fr').join(' ')}`;
+  // Phone (≤767): equal 1fr columns crush 8–10 stat columns into ~300px and
+  // values collide ("2257 3349 25,567"). There the table becomes a
+  // horizontal scroller with fixed, content-sized columns (ch = one digit,
+  // so they track the host font size), readable gaps, and a sticky YR
+  // column. Desktop keeps gridCols above untouched (rules are media-scoped).
+  const _phW = { gp:3, ppg:4.5, pass_cmp:4.5, pass_att:4.5, pass_yd:6, pass_td:3.5, pass_int:3.5,
+    rush_att:4, rush_yd:5, rush_td:3.5, rec:4, rec_yd:6.5, rec_td:3.5, rec_tgt:4,
+    fgm:4, fga:4, fgm_50p:3.5, xpm:4, xpa:4,
+    idp_tkl:4, idp_sack:5, idp_int:3.5, idp_pass_def:3.5, idp_qb_hit:4, idp_ff:3.5, fpts:6.5 };
+  const phoneCols = `4.5ch ${cols.map(c => (_phW[c.k] || 4.5) + 'ch').join(' ')}`;
+  _fwEnsureCareerPhoneCss();
 
   const years = Object.keys(careerData).sort((a,b) => b-a);
   if (!years.length) return `<div style="color:${_wr.text3};font-size:13px;padding:4px 0">No career stats available.</div>`;
@@ -308,7 +319,7 @@ function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
       </div>`;
   }
 
-  return `
+  return `<div class="fwpm-career-tbl" style="--fwpm-cols-ph:${phoneCols}">
     <div class="fwpm-career-row" style="grid-template-columns:${gridCols};padding-bottom:5px;border-bottom:2px solid ${_wr.border};margin-bottom:2px">
       <div class="fwpm-career-hdr">YR</div>
       ${cols.map(c => `<div class="fwpm-career-hdr" style="text-align:right">${c.l}</div>`).join('')}
@@ -318,7 +329,52 @@ function _fwBuildCareerTable(pid, careerData, pos, sc, playerObj) {
         <div style="font-weight:700;color:${_wr.text3}">${r.yr}</div>
         ${cols.map(c => `<div style="font-weight:600;text-align:right;color:${_wr.text}">${fmt(r[c.k], c.k)}</div>`).join('')}
       </div>`).join('')}
-    ${totalsRow}`;
+    ${totalsRow}</div>`;
+}
+
+// Phone-only career-table rules, injected once into <head> so every host
+// (modal, inline roster expand, player card Stats tab, draft room) gets them
+// without host CSS. Scoped to ≤767 — desktop layout is unchanged.
+function _fwEnsureCareerPhoneCss() {
+  if (typeof document === 'undefined' || document.getElementById('fwpm-career-phone-css')) return;
+  const st = document.createElement('style');
+  st.id = 'fwpm-career-phone-css';
+  st.textContent = `@media(max-width:767px){
+    .fwpm-career-tbl{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain;padding-bottom:2px}
+    .fwpm-career-tbl .fwpm-career-row{grid-template-columns:var(--fwpm-cols-ph)!important;column-gap:10px!important;min-width:max-content;white-space:nowrap}
+    .fwpm-career-tbl .fwpm-career-row>:first-child{position:sticky;left:0;z-index:1;padding-right:6px;background:var(--fwpm-career-sticky-bg,transparent)}
+    .fwpm-career-tbl.is-scrolled .fwpm-career-row>:first-child{box-shadow:6px 0 6px -4px rgba(0,0,0,.65)}
+  }`;
+  document.head.appendChild(st);
+  // The sticky YR cell only overlaps other cells once the table scrolls, so
+  // resolve an opaque backdrop for it lazily on first scroll: composite the
+  // ancestors' background colours down to the first opaque one. Hosts can
+  // also set --fwpm-career-sticky-bg themselves.
+  document.addEventListener('scroll', (e) => {
+    const t = e.target;
+    if (!t || !t.classList || !t.classList.contains('fwpm-career-tbl')) return;
+    t.classList.toggle('is-scrolled', t.scrollLeft > 0);
+    if (t.dataset.fwBg) return;
+    t.dataset.fwBg = '1';
+    try {
+      const layers = [];
+      for (let a = t; a && a.nodeType === 1; a = a.parentElement) {
+        const m = getComputedStyle(a).backgroundColor.match(/rgba?\(([^)]+)\)/);
+        if (!m) continue;
+        const v = m[1].split(/[\s,\/]+/).filter(Boolean).map(Number);
+        const al = v.length > 3 ? v[3] : 1;
+        if (al > 0) layers.push([v[0], v[1], v[2], al]);
+        if (al >= 1) break;
+      }
+      let out = [10, 10, 12];
+      for (let i = layers.length - 1; i >= 0; i--) {
+        const [r, g, b, al] = layers[i];
+        out = [r * al + out[0] * (1 - al), g * al + out[1] * (1 - al), b * al + out[2] * (1 - al)];
+      }
+      if (!getComputedStyle(t).getPropertyValue('--fwpm-career-sticky-bg').trim())
+        t.style.setProperty('--fwpm-career-sticky-bg', `rgb(${out.map(Math.round).join(',')})`);
+    } catch (err) {}
+  }, true);
 }
 
 // ── Main: open player modal ────────────────────────────────────

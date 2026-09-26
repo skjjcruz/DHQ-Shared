@@ -213,7 +213,12 @@
       .dhq-tutorial-btn.is-primary{background:var(--dhq-tutorial-accent,#D4AF37);border-color:var(--dhq-tutorial-accent,#D4AF37);color:#080808;flex:1}
       @media(max-width:720px){
         .dhq-tutorial-backdrop{backdrop-filter:blur(3px)}
-        .dhq-tutorial-panel,.dhq-tutorial-panel.is-anchored{left:12px!important;right:12px!important;bottom:12px!important;top:auto!important;transform:none!important;width:auto;grid-template-columns:1fr;padding:15px;max-height:calc(100vh - 24px)}
+        /* Phone: pin above the host's bottom dock + home indicator.
+           --wr-bottom-inset (dock + --sab) is the host registry var; the
+           env() fallback keeps a standalone host clear of the home
+           indicator. Top clears the notch/status bar; the panel scrolls
+           internally if a step is taller than what's left. */
+        .dhq-tutorial-panel,.dhq-tutorial-panel.is-anchored{left:calc(12px + var(--sal,env(safe-area-inset-left,0px)))!important;right:calc(12px + var(--sar,env(safe-area-inset-right,0px)))!important;bottom:calc(12px + var(--wr-bottom-inset,var(--sab,env(safe-area-inset-bottom,0px))))!important;top:auto!important;transform:none!important;width:auto;grid-template-columns:1fr;padding:15px;max-height:calc(100vh - 24px - var(--wr-bottom-inset,var(--sab,env(safe-area-inset-bottom,0px))) - var(--sat,env(safe-area-inset-top,0px)));max-height:calc(100dvh - 24px - var(--wr-bottom-inset,var(--sab,env(safe-area-inset-bottom,0px))) - var(--sat,env(safe-area-inset-top,0px)));overflow-y:auto;overscroll-behavior:contain}
         .dhq-tutorial-board{display:none}
         .dhq-tutorial-title{font-size:22px}
         .dhq-tutorial-copy{font-size:13px}
