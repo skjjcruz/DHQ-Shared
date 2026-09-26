@@ -621,14 +621,29 @@ async function fetchTransactions(leagueId, year, apiKey) {
       }
 
       if (type === 'FREE_AGENT' || type === 'BBID_WAIVER' || type === 'WAIVER') {
-        // MFL FA format: transaction field is "|pid1,pid2,pid3," (pipe-delimited, comma-separated player IDs)
+        // MFL add/drop format (verified against a live TYPE=transactions export,
+        // 2026-09-26): the pipe separates what was ADDED from what was DROPPED.
+        //   FREE_AGENT / WAIVER: "added1,added2,|dropped1,"
+        //   BBID_WAIVER:         "added1,|7.00|dropped1,"   (middle part = bid)
+        // The old parser read everything as adds, so each drop surfaced as an
+        // add of the id "mfl_|17107" (no such player → "+Player mfl_|17107"),
+        // and with no roster_ids the ticker could not name the owner.
+        const parts = String(t.transaction || '').split('|');
+        const isBbid = type === 'BBID_WAIVER';
+        const addPart = parts[0] || '';
+        const dropPart = (isBbid ? parts[2] : parts[1]) || '';
+        const bid = isBbid ? parseFloat(parts[1]) : NaN;
+        const ids = str => str.split(',').map(s => s.trim()).filter(s => /^\d+$/.test(s));
         const adds = {};
-        const raw = (t.transaction || '').replace(/^\|/, '');
-        raw.split(',').map(s => s.trim()).filter(Boolean).forEach(pid => {
-          const sid = cw[pid] || ('mfl_' + pid);
-          adds[sid] = t.franchise;
-        });
-        return { type: type === 'BBID_WAIVER' ? 'waiver' : 'free_agent', status: 'complete', created: ts, adds, drops: {}, _source: 'mfl' };
+        const drops = {};
+        ids(addPart).forEach(pid => { adds[cw[pid] || ('mfl_' + pid)] = t.franchise; });
+        ids(dropPart).forEach(pid => { drops[cw[pid] || ('mfl_' + pid)] = t.franchise; });
+        const out = {
+          type: isBbid ? 'waiver' : 'free_agent', status: 'complete', created: ts,
+          roster_ids: t.franchise ? [t.franchise] : [], adds, drops, _source: 'mfl',
+        };
+        if (Number.isFinite(bid) && bid > 0) out.settings = { waiver_bid: bid };
+        return out;
       }
 
       return { type: type.toLowerCase(), status: 'complete', created: ts, _source: 'mfl' };
