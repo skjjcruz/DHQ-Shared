@@ -36,13 +36,46 @@ const POSITION_MAP = {
   14: 'DB', 15: 'LB',
 };
 
-// ESPN lineup slot ID → position label (null = bench/IR, not starter)
+// ESPN lineup slot ID → position label (null = bench/IR, not starter).
+// Labels are the Sleeper roster_positions vocabulary the app's slot engine
+// (normSlot / FLEX_ALLOWED) understands. ESPN slot ids: 0 QB, 1 TQB, 2 RB,
+// 3 RB/WR, 4 WR, 5 WR/TE, 6 TE, 7 OP (QB/RB/WR/TE), 8 DT, 9 DE, 10 LB,
+// 11 DL, 12 CB, 13 S, 14 DB, 15 DP (any IDP), 16 D/ST, 17 K, 18 P, 19 HC,
+// 20 BN, 21 IR, 23 FLEX (RB/WR/TE).
 const LINEUP_SLOT_MAP = {
-  0: 'QB', 2: 'RB', 4: 'WR', 6: 'TE', 23: 'FLEX', 24: 'OP',
-  16: 'DEF', 17: 'K',
+  0: 'QB', 1: 'TQB', 2: 'RB', 3: 'WRRB_FLEX', 4: 'WR', 5: 'REC_FLEX', 6: 'TE',
+  23: 'FLEX', 7: 'SUPER_FLEX', 24: 'OP',
+  16: 'DEF', 17: 'K', 18: 'P', 19: 'HC',
+  8: 'DL', 9: 'DL', 11: 'DL', 10: 'LB', 12: 'DB', 13: 'DB', 14: 'DB', 15: 'IDP_FLEX',
   20: null, // Bench
   21: null, // IR
 };
+
+// Starting-slot ORDER shared by roster_positions (mapESPNSettings) and each
+// roster's starters[] (mapESPNRoster). The app pairs starters[i] with the
+// i-th non-bench roster_positions entry (Sleeper's contract), so both MUST
+// walk the same sequence. ESPN slot ids are not in display order (FLEX is
+// 23, OP is 7), and roster entries arrive in ESPN's own entry order — which
+// is how Josh Allen used to land in an RB slot. Offense, flexes, D/ST, K,
+// then IDP.
+const STARTER_SLOT_ORDER = [0, 1, 2, 3, 4, 5, 6, 23, 7, 24, 16, 17, 18, 19, 8, 9, 11, 10, 12, 13, 14, 15];
+
+// ESPN injuryStatus → the Sleeper injury_status vocabulary the app keys on
+// (e.g. Game Day's OUT set is { Out, IR, PUP, Sus, NA, COV }). ACTIVE/NORMAL
+// = healthy → no tag. Anything unrecognised passes through untouched.
+const ESPN_INJURY_STATUS_MAP = {
+  ACTIVE: '', NORMAL: '',
+  QUESTIONABLE: 'Questionable', DOUBTFUL: 'Doubtful', OUT: 'Out',
+  INJURY_RESERVE: 'IR', SUSPENSION: 'Sus', SUSPENDED: 'Sus',
+  PHYSICALLY_UNABLE_TO_PERFORM: 'PUP', PUP: 'PUP',
+  NOT_ACTIVE: 'NA', DAY_TO_DAY: 'DTD',
+};
+function mapESPNInjuryStatus(raw) {
+  if (raw == null) return '';
+  const k = String(raw).trim().toUpperCase();
+  if (!k) return '';
+  return Object.prototype.hasOwnProperty.call(ESPN_INJURY_STATUS_MAP, k) ? ESPN_INJURY_STATUS_MAP[k] : String(raw);
+}
 
 // ESPN stat ID → Sleeper scoring key (community-documented stat IDs)
 // Points values below are defaults; actual values come from ESPN settings
@@ -66,10 +99,7 @@ const ESPN_STAT_MAP = {
 };
 
 // ESPN lineup slot → Sleeper roster_positions string
-const SLOT_TO_ROSTER_POS = {
-  0: 'QB', 2: 'RB', 4: 'WR', 6: 'TE', 23: 'FLEX', 24: 'OP',
-  16: 'DEF', 17: 'K', 20: 'BN', 21: 'IR',
-};
+const SLOT_TO_ROSTER_POS = Object.assign({}, LINEUP_SLOT_MAP, { 20: 'BN', 21: 'IR' });
 
 // ── Proxy URL (Supabase Edge Function) ───────────────────────────
 // For authenticated (private) leagues: the proxy forwards requests
@@ -161,7 +191,7 @@ function mapESPNPlayer(entry) {
     team,
     age: p.age || 0,
     years_exp: p.experience || 0,
-    injury_status: p.injuryStatus || '',
+    injury_status: mapESPNInjuryStatus(p.injuryStatus),
   };
 }
 
@@ -169,11 +199,11 @@ function mapESPNPlayer(entry) {
  * Map an ESPN team + roster entries → Sleeper-compatible roster object.
  * crosswalk: Map<espnId, sleeperId> — used to resolve player_ids.
  */
-function mapESPNRoster(team, crosswalk) {
+function mapESPNRoster(team, crosswalk, slotCounts) {
   const entries = team.roster?.entries || [];
   const players = [];
-  const starters = [];
   const reserve = [];
+  const bySlot = {}; // ESPN slot id → pids in entry order
 
   entries.forEach(entry => {
     const espnId = entry.playerId || entry.playerPoolEntry?.player?.id;
@@ -184,9 +214,22 @@ function mapESPNRoster(team, crosswalk) {
     if (slotId === 21) {
       reserve.push(pid); // IR slot
     } else if (LINEUP_SLOT_MAP[slotId] !== null && LINEUP_SLOT_MAP[slotId] !== undefined) {
-      starters.push(pid); // Starting lineup slot
+      (bySlot[slotId] = bySlot[slotId] || []).push(pid); // Starting lineup slot
     }
     // slotId === 20 (Bench) → just in players[], not starters
+  });
+
+  // starters[] must line up slot-for-slot with roster_positions (see
+  // STARTER_SLOT_ORDER). With the league's slot counts, each slot is emitted
+  // count times and an unfilled one holds '0' (Sleeper's empty-slot marker)
+  // so later slots don't shift. Without counts, fall back to the filled
+  // slots in the same order.
+  const starters = [];
+  if (slotCounts && !STARTER_SLOT_ORDER.some(id => Number(slotCounts[id]) > 0)) slotCounts = null;
+  STARTER_SLOT_ORDER.forEach(slotId => {
+    const q = bySlot[slotId] || [];
+    const n = slotCounts ? Math.max(0, Number(slotCounts[slotId]) || 0) : q.length;
+    for (let i = 0; i < n; i++) starters.push(q[i] != null ? q[i] : '0');
   });
 
   const rec = team.record?.overall || {};
@@ -246,10 +289,14 @@ function mapESPNSettings(raw, leagueId, year) {
   if (scoring_settings.fum_lost > 0) scoring_settings.fum_lost = -scoring_settings.fum_lost;
 
   // ── Roster positions ──
+  // Starting slots in STARTER_SLOT_ORDER (the same walk mapESPNRoster uses
+  // for starters[]), then bench, then IR. Object key order would put FLEX
+  // (23) after BN/IR and misalign every starter.
   const slotCounts = settings.rosterSettings?.lineupSlotCounts || {};
   const roster_positions = [];
-  Object.entries(slotCounts).forEach(([slotId, count]) => {
-    const pos = SLOT_TO_ROSTER_POS[parseInt(slotId)];
+  STARTER_SLOT_ORDER.concat([20, 21]).forEach(slotId => {
+    const pos = SLOT_TO_ROSTER_POS[slotId];
+    const count = Number(slotCounts[slotId]) || 0;
     if (!pos || count <= 0) return;
     for (let i = 0; i < count; i++) roster_positions.push(pos);
   });
@@ -418,7 +465,7 @@ function mapToSleeperState(raw, leagueId, year, crosswalk) {
     });
 
     // Map roster
-    const roster = mapESPNRoster(team, cw);
+    const roster = mapESPNRoster(team, cw, raw.settings?.rosterSettings?.lineupSlotCounts);
     // Attach display name from members
     const owner = memberMap[team.primaryOwner];
     if (owner) {
