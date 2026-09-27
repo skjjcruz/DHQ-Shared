@@ -110,21 +110,16 @@ function getAppSession() {
 // can listen for the event.
 function _clearDeadAppSession(reason) {
     let email = null;
-    let accountToken = false;
     try {
         const raw = localStorage.getItem(FW_SESSION_KEY);
-        const stored = raw ? JSON.parse(raw) : null;
-        email = stored?.user?.email || null;
-        accountToken = !!_jwtClaims(stored?.token)?.app_metadata?.user_id;
+        email = raw ? (JSON.parse(raw)?.user?.email || null) : null;
     } catch {}
     try { localStorage.removeItem(FW_SESSION_KEY); } catch {}
-    // The server ended this account session on purpose (password changed,
-    // signed out everywhere, account deleted): the ESPN/MFL logins and AI keys
-    // on this device belonged to it, so they go too. Only for real account
-    // tokens — a legacy Sleeper token parked in fw_session_v1 is "rejected" by
-    // fw-refresh-session on every load without anything having been revoked,
-    // and guests have no token at all.
-    if (reason === 'revoked' && accountToken) clearDeviceSecrets();
+    // Device secrets (ESPN/MFL logins, AI keys) are NOT wiped here: a 401 is
+    // not proof of a deliberate revocation — the server answers 401 for a
+    // transient app_users read failure too. The session is dropped; if someone
+    // else then signs in or continues as a guest in this tab,
+    // _guardCredentialOwner clears the secrets on that load.
     _supabase = null;
     _supabaseToken = null;
     try {
@@ -156,7 +151,7 @@ function _jwtClaims(token) {
 // localStorage). sessionStorage survives until the tab closes — and in the
 // iOS app and home-screen installs, effectively until the app is killed — so
 // on a shared iPad the next person inherited them. They are cleared on every
-// explicit sign-out, when the server revokes the account session, and when a
+// explicit sign-out, and when a
 // DIFFERENT account opens the app in this tab (see _guardCredentialOwner).
 // Guests are never cleared on page load: a guest who connected an ESPN
 // private league keeps it until they sign out.
@@ -222,9 +217,20 @@ function clearOAuthPersistence() {
     }
 }
 
-// Who is signed in on this device, regardless of token expiry — this is about
-// WHOSE credentials are stored, not whether the session still works.
+// Whose credentials are stored on this device. App-account identity ignores
+// token expiry (a lapsed session is still the same person). Legacy Sleeper
+// tokens count only while unexpired: older builds never removed
+// od_session_v1, so a stale one must not make a guest tab look "owned".
+// A guest tab (wr_guest_v1, no app session) has no owner.
+function _legacyTokenLive(stored) {
+    if (_jwtExpired(stored.token)) return false;
+    if (stored.expiresAt && Date.now() >= new Date(stored.expiresAt).getTime()) return false;
+    return true;
+}
 function _sessionIdentity() {
+    let appToken = null;
+    try { appToken = JSON.parse(localStorage.getItem(FW_SESSION_KEY) || 'null')?.token || null; } catch {}
+    try { if (!appToken && localStorage.getItem('wr_guest_v1') === '1') return null; } catch {}
     for (const key of [FW_SESSION_KEY, SESSION_LS_KEY]) {
         try {
             const stored = JSON.parse(localStorage.getItem(key) || 'null');
@@ -232,9 +238,12 @@ function _sessionIdentity() {
             const claims = _jwtClaims(stored.token) || {};
             const meta = claims.app_metadata || {};
             if (meta.user_id) return 'account:' + meta.user_id;
-            if (typeof meta.sleeper_username === 'string' && meta.sleeper_username) return 'legacy:' + meta.sleeper_username.toLowerCase();
+            if (typeof meta.sleeper_username === 'string' && meta.sleeper_username) {
+                if (!_legacyTokenLive(stored)) continue;
+                return 'legacy:' + meta.sleeper_username.toLowerCase();
+            }
             if (key === FW_SESSION_KEY && stored.user?.id) return 'account:' + stored.user.id;
-            if (typeof claims.sub === 'string' && claims.sub) return 'token:' + claims.sub;
+            if (typeof claims.sub === 'string' && claims.sub && !_jwtExpired(stored.token)) return 'token:' + claims.sub;
         } catch {}
     }
     return null;
@@ -1199,7 +1208,9 @@ window.OD.updatePassword = async function(username, newPassword) {
 //             verified by get-session-token (server bcrypt check), then
 //             set-password rotates it with that freshly verified token.
 //   expired — a session is stored but is no longer usable → sign in again.
-//   none    — guest / signed out → nothing to change.
+//   guest   — guest lane (wr_guest_v1, no app session) → nothing to change.
+//   local   — only an old browser-local login, no server session → sign in.
+//   none    — signed out → sign in.
 function _oauthProviderFor(email) {
     const want = String(email || '').trim().toLowerCase();
     if (!want) return null;
@@ -1218,6 +1229,9 @@ function _oauthProviderFor(email) {
 function passwordAccount() {
     try {
         const app = JSON.parse(localStorage.getItem(FW_SESSION_KEY) || 'null');
+        // Guest lane: no app session and the guest flag set. Any old legacy
+        // token left behind by earlier builds doesn't make this an account.
+        if (!app?.token && localStorage.getItem('wr_guest_v1') === '1') return { kind: 'guest' };
         if (app?.token) {
             const meta = _jwtClaims(app.token)?.app_metadata || {};
             if (meta.user_id) {
@@ -1243,6 +1257,9 @@ function passwordAccount() {
             return { kind: 'legacy', token: legacy.token, username: meta.sleeper_username };
         }
     } catch {}
+    // An old local-only login (od_auth_v1 without any server session) is not
+    // an account the server can change a password for.
+    try { if (localStorage.getItem('od_auth_v1')) return { kind: 'local' }; } catch {}
     return { kind: 'none' };
 }
 
@@ -1286,7 +1303,8 @@ function _serverMessage(data, fallback) {
 //   'uncertain' the change may or may not have happened
 async function changePassword(currentPassword, newPassword) {
     const session = passwordAccount();
-    if (session.kind === 'none') throw _passwordError('Sign in to change your password.', 'signin');
+    if (session.kind === 'guest') throw _passwordError('Guests have no password to change.', 'invalid');
+    if (session.kind === 'none' || session.kind === 'local') throw _passwordError('Sign in to change your password.', 'signin');
     if (session.kind === 'expired') throw _passwordError('Your session has ended. Sign in again, then change your password.', 'signin');
     if (typeof currentPassword !== 'string' || !currentPassword || currentPassword.length > 1024) {
         throw _passwordError('Enter your current password.', 'invalid');
@@ -1298,28 +1316,35 @@ async function changePassword(currentPassword, newPassword) {
     if (newPassword === currentPassword) throw _passwordError('Choose a different new password.', 'invalid');
     if (!isConfigured()) throw _passwordError('Account services are unavailable. Please try again.', 'network');
 
-    // A different account signing in (another tab) mid-request must not be
-    // signed out by this request's result.
-    const snapshot = () => [FW_SESSION_KEY, SESSION_LS_KEY].map(k => { try { return localStorage.getItem(k); } catch { return null; } }).join('\n');
-    const before = snapshot();
-    const unchanged = () => snapshot() === before;
+    // A DIFFERENT account signing in (another tab) mid-request must not be
+    // signed out by this request's result. Compare who is signed in, not the
+    // raw stored strings: a token refresh (ensureFreshAppSession, billing
+    // re-mint) rewrites them for the same account, and a mid-request 401
+    // removes them — neither is an account switch.
+    const owner = _sessionIdentity();
+    const switched = () => { const now = _sessionIdentity(); return !!now && now !== owner; };
+    const NOTHING_CHANGED_SIGNIN = 'Your account changed while this was being saved, so nothing was changed. Sign in again, then retry.';
 
     if (session.kind === 'account') {
         const res = await _passwordRequest(BACKEND_ENDPOINTS.fwChangePassword, { currentPassword, password: newPassword }, session.token);
         if (res.ok) {
             if (res.data && res.data.ok === true && res.data.signInRequired === true) {
-                return { ok: true, kind: 'account', sessionChanged: !unchanged() };
+                return { ok: true, kind: 'account', sessionChanged: switched() };
             }
             throw _passwordError(PASSWORD_UNCONFIRMED, 'uncertain');
         }
         if (res.status === 400) {
-            const msg = _serverMessage(res.data, 'Current password is incorrect.');
-            const code = /provider/i.test(msg) ? 'provider' : /current password/i.test(msg) ? 'current' : 'invalid';
-            throw _passwordError(code === 'provider'
-                ? 'This account signs in with Google or Apple, so it has no Dynasty HQ password. Change your password with that provider.'
-                : msg, code);
+            const msg = _serverMessage(res.data, 'That password change was not accepted.');
+            if (/provider sign-in|sign-in provider/i.test(msg)) {
+                throw _passwordError('This account signs in with Google or Apple, so it has no Dynasty HQ password. Change your password with that provider.', 'provider');
+            }
+            if (/^current password is incorrect/i.test(msg)) throw _passwordError('Current password is incorrect.', 'current');
+            throw _passwordError(msg, 'invalid'); // same password, length/format, bad request
         }
-        if (res.status === 401 || res.status === 409) throw _passwordError('Your session has ended. Sign in again, then change your password.', 'signin');
+        // change_app_password's compare-and-swap lost (session_version or hash
+        // moved): nothing was written.
+        if (res.status === 409) throw _passwordError(NOTHING_CHANGED_SIGNIN, 'signin');
+        if (res.status === 401) throw _passwordError('Your session has ended. Sign in again, then change your password.', 'signin');
         if (res.status === 429) throw _passwordError('Too many attempts. Wait 15 minutes, then try again.', 'rate');
         if (res.status === 413) throw _passwordError('That password is too long.', 'invalid');
         throw _passwordError(PASSWORD_UNCONFIRMED, 'uncertain');
@@ -1330,20 +1355,29 @@ async function changePassword(currentPassword, newPassword) {
     const verified = await _passwordRequest(BACKEND_ENDPOINTS.getSessionToken, { username: session.username, password: currentPassword });
     if (!verified.ok || typeof verified.data?.token !== 'string' || !verified.data.token) {
         if (verified.status === 401) {
-            if (verified.data?.code === 'passwordless_sleeper_disabled') throw _passwordError('This Sleeper login has no password to change.', 'invalid');
-            throw _passwordError('Current password is incorrect.', 'current');
+            const msg = _serverMessage(verified.data, '');
+            if (verified.data?.code === 'passwordless_sleeper_disabled' || /passwordless/i.test(msg)) throw _passwordError('This Sleeper login has no password to change.', 'invalid');
+            if (/incorrect password|password required/i.test(msg) || !msg) throw _passwordError('Current password is incorrect.', 'current');
+            throw _passwordError('Your session has ended. Sign in again, then change your password.', 'signin');
         }
         if (verified.status === 429) throw _passwordError('Too many attempts. Wait 15 minutes, then try again.', 'rate');
         throw _passwordError('Couldn’t check your current password. Check your connection and try again — nothing was changed.', 'network');
     }
-    if (!unchanged()) throw _passwordError('Your account changed in another tab. Reopen Settings and try again — nothing was changed.', 'signin');
+    if (switched()) throw _passwordError('Your account changed in another tab. Reopen Settings and try again — nothing was changed.', 'signin');
     const res = await _passwordRequest(BACKEND_ENDPOINTS.setPassword, { username: session.username, password: newPassword }, verified.data.token);
     if (res.ok && res.data && res.data.success === true) {
-        return { ok: true, kind: 'legacy', username: session.username, sessionChanged: !unchanged() };
+        return { ok: true, kind: 'legacy', username: session.username, sessionChanged: switched() };
     }
     if (res.status === 429) throw _passwordError('Too many attempts. Wait 15 minutes, then try again.', 'rate');
     if (res.status === 400) throw _passwordError(_serverMessage(res.data, 'That password can’t be used.'), 'invalid');
-    if (res.status === 401 || res.status === 403) throw _passwordError('Your session has ended. Sign in again, then change your password.', 'signin');
+    // Compare-and-swap lost (the password changed meanwhile): nothing written.
+    if (res.status === 409) throw _passwordError(NOTHING_CHANGED_SIGNIN, 'signin');
+    if (res.status === 403) {
+        const msg = _serverMessage(res.data, '');
+        if (/passwordless/i.test(msg)) throw _passwordError('This Sleeper login has no password to change.', 'invalid');
+        throw _passwordError(msg || 'This password can’t be changed from here — nothing was changed.', 'invalid');
+    }
+    if (res.status === 401) throw _passwordError('Your session has ended. Sign in again, then change your password.', 'signin');
     // set-password checks the Sleeper username before it writes anything.
     if (res.status === 404 || res.status === 503) throw _passwordError('Couldn’t reach Sleeper to confirm your account. Try again in a minute — nothing was changed.', 'network');
     throw _passwordError(PASSWORD_UNCONFIRMED, 'uncertain');
