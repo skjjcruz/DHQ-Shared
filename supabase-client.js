@@ -167,6 +167,33 @@ function _isLegacySessionToken(token) {
     return !!(meta && typeof meta.sleeper_username === 'string' && meta.sleeper_username && !meta.user_id);
 }
 
+// Users bitten before that fix lost fw_session_v1 but still hold the live
+// od_session_v1 copy (+ od_auth_v1). With no fw_session_v1 every gate treats
+// them as signed out. Rebuild it from the copy in login.html's exact shape
+// ({token, expiresAt, user:{sleeperUsername, isGifted}}) — never from an
+// expired token, never for a guest tab (wr_guest_v1: a leftover legacy copy
+// must not make a guest tab "owned"), never over an existing fw_session_v1.
+// index.html's pre-paint gate does the same on non-localhost origins before
+// the app loads; this covers localhost/dev, where that gate returns early.
+// Returns the re-hydrated session or null.
+function _rehydrateLegacySession() {
+    try {
+        if (localStorage.getItem(FW_SESSION_KEY)) return null;
+        if (localStorage.getItem('wr_guest_v1') === '1') return null;
+        const legacy = JSON.parse(localStorage.getItem(SESSION_LS_KEY) || 'null');
+        if (!legacy?.token || !_isLegacySessionToken(legacy.token) || _jwtExpired(legacy.token)) return null;
+        const claims = _jwtClaims(legacy.token);
+        const expiresAt = legacy.expiresAt || (typeof claims.exp === 'number' ? new Date(claims.exp * 1000).toISOString() : null);
+        const session = {
+            token: legacy.token,
+            expiresAt,
+            user: { sleeperUsername: claims.app_metadata.sleeper_username, isGifted: !!(legacy.isGifted || claims.app_metadata.is_gifted) },
+        };
+        localStorage.setItem(FW_SESSION_KEY, JSON.stringify(session));
+        return session;
+    } catch { return null; }
+}
+
 // ══════════════════════════════════════════════════════════════════
 // SIGN-OUT HYGIENE — platform logins and personal AI keys
 //
@@ -352,7 +379,13 @@ function ensureFreshAppSession() {
         try {
             const raw = localStorage.getItem(FW_SESSION_KEY);
             const session = raw ? JSON.parse(raw) : null;
-            if (!session?.token) return null;
+            if (!session?.token) {
+                // No app session — a legacy login bitten by the old clear
+                // path may still be recoverable from its od_session_v1 copy.
+                // Not an app account either way, so nothing to refresh.
+                if (_rehydrateLegacySession()) _sessionSyncToken = _storedSessionToken();
+                return null;
+            }
             if (_jwtExpired(session.token)) {
                 _clearDeadAppSession('expired');
                 _sessionSyncToken = null;
