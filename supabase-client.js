@@ -19,6 +19,7 @@ const BACKEND_ENDPOINTS = {
     fwProfile: APP_CONFIG.endpoints?.fwProfile || `${SUPABASE_URL}/functions/v1/fw-profile`,
     fwRefreshSession: APP_CONFIG.endpoints?.fwRefreshSession || `${SUPABASE_URL}/functions/v1/fw-refresh-session`,
     fwDeleteAccount: APP_CONFIG.endpoints?.fwDeleteAccount || `${SUPABASE_URL}/functions/v1/fw-delete-account`,
+    fwChangePassword: APP_CONFIG.endpoints?.fwChangePassword || `${SUPABASE_URL}/functions/v1/fw-change-password`,
 };
 
 // The server AI fetch (OD.callAI) had no timeout: a stalled ai-analyze edge
@@ -109,16 +110,167 @@ function getAppSession() {
 // can listen for the event.
 function _clearDeadAppSession(reason) {
     let email = null;
+    let accountToken = false;
     try {
         const raw = localStorage.getItem(FW_SESSION_KEY);
-        email = raw ? (JSON.parse(raw)?.user?.email || null) : null;
+        const stored = raw ? JSON.parse(raw) : null;
+        email = stored?.user?.email || null;
+        accountToken = !!_jwtClaims(stored?.token)?.app_metadata?.user_id;
     } catch {}
     try { localStorage.removeItem(FW_SESSION_KEY); } catch {}
+    // The server ended this account session on purpose (password changed,
+    // signed out everywhere, account deleted): the ESPN/MFL logins and AI keys
+    // on this device belonged to it, so they go too. Only for real account
+    // tokens — a legacy Sleeper token parked in fw_session_v1 is "rejected" by
+    // fw-refresh-session on every load without anything having been revoked,
+    // and guests have no token at all.
+    if (reason === 'revoked' && accountToken) clearDeviceSecrets();
     _supabase = null;
     _supabaseToken = null;
     try {
         window.dispatchEvent(new CustomEvent('dhq:session-expired', { detail: { reason, email } }));
     } catch {}
+}
+
+// Decoded JWT claims (base64url, UTF-8 safe); null when undecodable. Never
+// used to trust anything — only to tell which kind of session is stored.
+function _jwtClaims(token) {
+    try {
+        const part = String(token || '').split('.')[1];
+        if (!part) return null;
+        let b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+        while (b64.length % 4) b64 += '=';
+        const bin = window.atob(b64);
+        let json = bin;
+        try { json = decodeURIComponent(bin.split('').map(c => '%' + c.charCodeAt(0).toString(16).padStart(2, '0')).join('')); } catch {}
+        const claims = JSON.parse(json);
+        return claims && typeof claims === 'object' ? claims : null;
+    } catch { return null; }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// SIGN-OUT HYGIENE — platform logins and personal AI keys
+//
+// ESPN private-league cookies, the MFL API key / lineup login cookie, the
+// Yahoo session handle and BYO AI keys live in sessionStorage (older builds:
+// localStorage). sessionStorage survives until the tab closes — and in the
+// iOS app and home-screen installs, effectively until the app is killed — so
+// on a shared iPad the next person inherited them. They are cleared on every
+// explicit sign-out, when the server revokes the account session, and when a
+// DIFFERENT account opens the app in this tab (see _guardCredentialOwner).
+// Guests are never cleared on page load: a guest who connected an ESPN
+// private league keeps it until they sign out.
+//
+// Deliberately KEPT: league pointers (espn_league_id/year/team_id,
+// mfl_league_id/year/franchise_id) — public ids, not credentials, and for
+// email accounts nothing on the server remembers them, so wiping them would
+// make every sign-out a full reconnect; draft boards, notes, caches, theme.
+// ══════════════════════════════════════════════════════════════════
+const DEVICE_SECRET_KEYS = [
+    'espn_s2', 'espn_swid',                 // ESPN private-league cookies
+    'mfl_api_key',                          // MFL private-league API key
+    'mfl_write_cookie', 'mfl_write_host',   // MFL login cookie for lineup submits
+    'yahoo_session_id',                     // Yahoo OAuth session handle
+    'dynastyhq_ai_key', 'dynastyhq_xai_key', 'dynastyhq_gemini_key',
+    'dynastyhq_anthropic_key', 'dynastyhq_apikey',            // BYO AI keys
+    'dynastyhq_ai_provider', 'dynastyhq_ai_model',            // their session-only settings
+];
+const CREDENTIAL_OWNER_KEY = 'dhq_credentials_owner_v1';
+
+function _storageKeys(store) {
+    try { return Array.from({ length: store.length }, (_, i) => store.key(i)).filter(Boolean); } catch { return []; }
+}
+
+function clearDeviceSecrets() {
+    const stores = [];
+    try { stores.push(window.sessionStorage); } catch {}
+    try { stores.push(window.localStorage); } catch {}
+    for (const store of stores) {
+        if (!store) continue;
+        for (const key of DEVICE_SECRET_KEYS) { try { store.removeItem(key); } catch {} }
+        // Per-league connector records normally hold no secrets (the ESPN/MFL
+        // connectors strip them), but older builds embedded them — strip.
+        for (const key of _storageKeys(store)) {
+            if (!/^(?:espn|mfl)_creds_/.test(key)) continue;
+            try {
+                const value = JSON.parse(store.getItem(key));
+                if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('bad record');
+                if (!('apiKey' in value || 'espnS2' in value || 'swid' in value)) continue;
+                delete value.apiKey; delete value.espnS2; delete value.swid;
+                store.setItem(key, JSON.stringify(value));
+            } catch { try { store.removeItem(key); } catch {} }
+        }
+    }
+    // In-memory copies the current page may still hold.
+    try {
+        if (window.S) { delete window.S._mflApiKey; delete window.S.apiKey; }
+    } catch {}
+}
+
+// Supabase's own OAuth persistence (Google/Apple sign-in). Left behind, the
+// landing page silently re-signed the previous Google user straight back in
+// after "Sign out" (its OAuth handler re-syncs any stored provider session).
+function _supabaseAuthKeys() {
+    let ref = '';
+    try { ref = new URL(SUPABASE_URL).hostname.split('.')[0]; } catch {}
+    return ref ? ['sb-' + ref + '-auth-token', 'sb-' + ref + '-auth-token-code-verifier', 'sb-' + ref + '-auth-token-user'] : [];
+}
+function clearOAuthPersistence() {
+    for (const key of _supabaseAuthKeys()) {
+        try { localStorage.removeItem(key); } catch {}
+        try { sessionStorage.removeItem(key); } catch {}
+    }
+}
+
+// Who is signed in on this device, regardless of token expiry — this is about
+// WHOSE credentials are stored, not whether the session still works.
+function _sessionIdentity() {
+    for (const key of [FW_SESSION_KEY, SESSION_LS_KEY]) {
+        try {
+            const stored = JSON.parse(localStorage.getItem(key) || 'null');
+            if (!stored?.token) continue;
+            const claims = _jwtClaims(stored.token) || {};
+            const meta = claims.app_metadata || {};
+            if (meta.user_id) return 'account:' + meta.user_id;
+            if (typeof meta.sleeper_username === 'string' && meta.sleeper_username) return 'legacy:' + meta.sleeper_username.toLowerCase();
+            if (key === FW_SESSION_KEY && stored.user?.id) return 'account:' + stored.user.id;
+            if (typeof claims.sub === 'string' && claims.sub) return 'token:' + claims.sub;
+        } catch {}
+    }
+    return null;
+}
+
+// Account switch without an explicit sign-out (e.g. A's session lapsed and B
+// signed in on this tab, or A's session ended and someone continued as a
+// guest): the stored platform logins belong to A, so they are cleared. A
+// guest who then creates an account keeps them — nobody else was signed in.
+function _guardCredentialOwner() {
+    try {
+        const prior = sessionStorage.getItem(CREDENTIAL_OWNER_KEY);
+        const current = _sessionIdentity();
+        if (prior && prior !== current) clearDeviceSecrets();
+        if (current) sessionStorage.setItem(CREDENTIAL_OWNER_KEY, current);
+        else if (prior) sessionStorage.removeItem(CREDENTIAL_OWNER_KEY);
+    } catch {}
+}
+_guardCredentialOwner();
+
+// Everything an explicit sign-out removes, minus navigation (callers decide
+// where to go). Session tokens for both the app account and the legacy Sleeper
+// login, the legacy local login, the guest flag (landing.html sends a guest
+// with a saved league straight back into the app, so a guest could not sign
+// out), the Supabase OAuth session, and the device secrets above.
+function clearSignedInState() {
+    clearDeviceSecrets();
+    clearOAuthPersistence();
+    for (const key of [FW_SESSION_KEY, SESSION_LS_KEY, 'od_auth_v1', 'wr_guest_v1']) {
+        try { localStorage.removeItem(key); } catch {}
+    }
+    try { sessionStorage.removeItem(CREDENTIAL_OWNER_KEY); } catch {}
+    _supabase = null;
+    _supabaseToken = null;
+    _sessionSyncPromise = null;
+    _sessionSyncToken = null;
 }
 
 // Age of the token's `iat` claim in hours; null when undecodable.
@@ -1029,6 +1181,176 @@ window.OD.updatePassword = async function(username, newPassword) {
     const result = await resp.json();
     if (!resp.ok) throw new Error(result.error || 'Failed to update password');
 };
+
+// ── Change password (Settings) ────────────────────────────────
+// The old Settings flow checked the current password against a client-side
+// hash that email accounts never have, then called set-password — which
+// updates the legacy Sleeper-username `users` table, not the email account
+// (`app_users`). It could say "Password updated" while nothing changed.
+//
+// Which password the stored session can change:
+//   account — Dynasty HQ email account → fw-change-password (checks the current
+//             password server-side, bumps session_version so EVERY session —
+//             this one included — ends; the caller must sign out).
+//             `provider` is set when this browser also holds a Google/Apple
+//             sign-in for the same email: a hint only (an email account later
+//             linked to Google still has a password), the server decides.
+//   legacy  — Sleeper-username login (users table): the current password is
+//             verified by get-session-token (server bcrypt check), then
+//             set-password rotates it with that freshly verified token.
+//   expired — a session is stored but is no longer usable → sign in again.
+//   none    — guest / signed out → nothing to change.
+function _oauthProviderFor(email) {
+    const want = String(email || '').trim().toLowerCase();
+    if (!want) return null;
+    for (const key of _supabaseAuthKeys()) {
+        if (!/auth-token$/.test(key)) continue;
+        try {
+            const raw = JSON.parse(localStorage.getItem(key) || 'null');
+            const user = raw?.user || raw?.currentSession?.user || null;
+            const provider = String(user?.app_metadata?.provider || '').toLowerCase();
+            if (user && String(user.email || '').trim().toLowerCase() === want && provider && provider !== 'email') return provider;
+        } catch {}
+    }
+    return null;
+}
+
+function passwordAccount() {
+    try {
+        const app = JSON.parse(localStorage.getItem(FW_SESSION_KEY) || 'null');
+        if (app?.token) {
+            const meta = _jwtClaims(app.token)?.app_metadata || {};
+            if (meta.user_id) {
+                if (_jwtExpired(app.token)) return { kind: 'expired' };
+                const email = app.user?.email || meta.email || null;
+                return { kind: 'account', token: app.token, email, provider: _oauthProviderFor(email) };
+            }
+            if (typeof meta.sleeper_username === 'string' && meta.sleeper_username) {
+                if (_jwtExpired(app.token)) return { kind: 'expired' };
+                return { kind: 'legacy', token: app.token, username: meta.sleeper_username };
+            }
+            return { kind: 'expired' };
+        }
+    } catch {}
+    try {
+        const legacy = JSON.parse(localStorage.getItem(SESSION_LS_KEY) || 'null');
+        if (legacy?.token) {
+            const meta = _jwtClaims(legacy.token)?.app_metadata || {};
+            if (typeof meta.sleeper_username !== 'string' || !meta.sleeper_username) return { kind: 'expired' };
+            const lapsed = _jwtExpired(legacy.token)
+                || (legacy.expiresAt && Date.now() >= new Date(legacy.expiresAt).getTime() - 5 * 60 * 1000);
+            if (lapsed) return { kind: 'expired' };
+            return { kind: 'legacy', token: legacy.token, username: meta.sleeper_username };
+        }
+    } catch {}
+    return { kind: 'none' };
+}
+
+const PASSWORD_REQUEST_TIMEOUT_MS = 15000;
+const PASSWORD_UNCONFIRMED = 'We couldn’t confirm the password change. Try signing in with your new password before trying again.';
+
+function _passwordError(message, code) {
+    const error = new Error(message);
+    error.code = code;
+    return error;
+}
+
+async function _passwordRequest(url, body, token) {
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), PASSWORD_REQUEST_TIMEOUT_MS) : null;
+    try {
+        const headers = { 'Content-Type': 'application/json', 'apikey': SUPABASE_ANON };
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const resp = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), signal: ctrl ? ctrl.signal : undefined });
+        let data = null;
+        try { data = await resp.json(); } catch {}
+        if (!data || typeof data !== 'object' || Array.isArray(data)) data = null;
+        return { status: resp.status, ok: resp.ok, data };
+    } catch {
+        return { status: 0, ok: false, data: null };
+    } finally {
+        if (timer) clearTimeout(timer);
+    }
+}
+
+function _serverMessage(data, fallback) {
+    const msg = data && typeof data.error === 'string' ? data.error.trim() : '';
+    return msg && msg.length <= 200 ? msg : fallback;
+}
+
+// Resolves { ok: true, kind, username?, sessionChanged? } ONLY when the server
+// confirmed the change; throws an Error with .code otherwise:
+//   'invalid'  bad input / same password      'current'  wrong current password
+//   'provider' Google/Apple account           'signin'   session ended → sign in
+//   'rate'     too many attempts              'network'  nothing was changed
+//   'uncertain' the change may or may not have happened
+async function changePassword(currentPassword, newPassword) {
+    const session = passwordAccount();
+    if (session.kind === 'none') throw _passwordError('Sign in to change your password.', 'signin');
+    if (session.kind === 'expired') throw _passwordError('Your session has ended. Sign in again, then change your password.', 'signin');
+    if (typeof currentPassword !== 'string' || !currentPassword || currentPassword.length > 1024) {
+        throw _passwordError('Enter your current password.', 'invalid');
+    }
+    const maxLen = session.kind === 'legacy' ? 128 : 1024;
+    if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > maxLen) {
+        throw _passwordError('New password must be 8 to ' + maxLen + ' characters.', 'invalid');
+    }
+    if (newPassword === currentPassword) throw _passwordError('Choose a different new password.', 'invalid');
+    if (!isConfigured()) throw _passwordError('Account services are unavailable. Please try again.', 'network');
+
+    // A different account signing in (another tab) mid-request must not be
+    // signed out by this request's result.
+    const snapshot = () => [FW_SESSION_KEY, SESSION_LS_KEY].map(k => { try { return localStorage.getItem(k); } catch { return null; } }).join('\n');
+    const before = snapshot();
+    const unchanged = () => snapshot() === before;
+
+    if (session.kind === 'account') {
+        const res = await _passwordRequest(BACKEND_ENDPOINTS.fwChangePassword, { currentPassword, password: newPassword }, session.token);
+        if (res.ok) {
+            if (res.data && res.data.ok === true && res.data.signInRequired === true) {
+                return { ok: true, kind: 'account', sessionChanged: !unchanged() };
+            }
+            throw _passwordError(PASSWORD_UNCONFIRMED, 'uncertain');
+        }
+        if (res.status === 400) {
+            const msg = _serverMessage(res.data, 'Current password is incorrect.');
+            const code = /provider/i.test(msg) ? 'provider' : /current password/i.test(msg) ? 'current' : 'invalid';
+            throw _passwordError(code === 'provider'
+                ? 'This account signs in with Google or Apple, so it has no Dynasty HQ password. Change your password with that provider.'
+                : msg, code);
+        }
+        if (res.status === 401 || res.status === 409) throw _passwordError('Your session has ended. Sign in again, then change your password.', 'signin');
+        if (res.status === 429) throw _passwordError('Too many attempts. Wait 15 minutes, then try again.', 'rate');
+        if (res.status === 413) throw _passwordError('That password is too long.', 'invalid');
+        throw _passwordError(PASSWORD_UNCONFIRMED, 'uncertain');
+    }
+
+    // Legacy Sleeper-username login. Re-authenticate on the server first: the
+    // stored hashes are bcrypt and can't (and mustn't) be checked in the browser.
+    const verified = await _passwordRequest(BACKEND_ENDPOINTS.getSessionToken, { username: session.username, password: currentPassword });
+    if (!verified.ok || typeof verified.data?.token !== 'string' || !verified.data.token) {
+        if (verified.status === 401) {
+            if (verified.data?.code === 'passwordless_sleeper_disabled') throw _passwordError('This Sleeper login has no password to change.', 'invalid');
+            throw _passwordError('Current password is incorrect.', 'current');
+        }
+        if (verified.status === 429) throw _passwordError('Too many attempts. Wait 15 minutes, then try again.', 'rate');
+        throw _passwordError('Couldn’t check your current password. Check your connection and try again — nothing was changed.', 'network');
+    }
+    if (!unchanged()) throw _passwordError('Your account changed in another tab. Reopen Settings and try again — nothing was changed.', 'signin');
+    const res = await _passwordRequest(BACKEND_ENDPOINTS.setPassword, { username: session.username, password: newPassword }, verified.data.token);
+    if (res.ok && res.data && res.data.success === true) {
+        return { ok: true, kind: 'legacy', username: session.username, sessionChanged: !unchanged() };
+    }
+    if (res.status === 429) throw _passwordError('Too many attempts. Wait 15 minutes, then try again.', 'rate');
+    if (res.status === 400) throw _passwordError(_serverMessage(res.data, 'That password can’t be used.'), 'invalid');
+    if (res.status === 401 || res.status === 403) throw _passwordError('Your session has ended. Sign in again, then change your password.', 'signin');
+    // set-password checks the Sleeper username before it writes anything.
+    if (res.status === 404 || res.status === 503) throw _passwordError('Couldn’t reach Sleeper to confirm your account. Try again in a minute — nothing was changed.', 'network');
+    throw _passwordError(PASSWORD_UNCONFIRMED, 'uncertain');
+}
+
+window.OD.passwordAccount = passwordAccount;
+window.OD.changePassword = changePassword;
 
 // Permanently delete the signed-in user's account and all their data.
 // Required for App Store / Play Store compliance. After success the caller
@@ -2246,11 +2568,25 @@ window.OD.signInWithApple = function() {
 
 window.OD.signOut = async function() {
     const client = getClient();
-    if (client) await client.auth.signOut().catch(() => {});
-    localStorage.removeItem(SESSION_LS_KEY);
-    localStorage.removeItem(FW_SESSION_KEY);
+    // Local-only SDK sign-out, capped: a dead network must not strand the
+    // user on a page that still looks signed in.
+    if (client) {
+        let timer = null;
+        await Promise.race([
+            Promise.resolve().then(() => client.auth.signOut({ scope: 'local' })).catch(() => {}),
+            new Promise(resolve => { timer = setTimeout(resolve, 1500); }),
+        ]);
+        if (timer) clearTimeout(timer);
+    }
+    // Session keys + ESPN/MFL logins + personal AI keys + Supabase OAuth
+    // persistence (see SIGN-OUT HYGIENE).
+    clearSignedInState();
     window.location.reload();
 };
+
+window.OD.clearDeviceSecrets = clearDeviceSecrets;
+window.OD.clearOAuthPersistence = clearOAuthPersistence;
+window.OD.clearSignedInState = clearSignedInState;
 
 window.OD.getOAuthSession = async function() {
     const client = getClient();

@@ -41,8 +41,25 @@
     return _S().players?.[pid]?.position || '';
   }
 
+  // The open league's plan. In War Room (per-league strategy records exist)
+  // this goes through GmMode.effects — the league-aware resolver — because a
+  // raw GMStrategy.getStrategy() read returns whatever league saved last.
+  // Scout keeps one strategy for every league and has no per-league records,
+  // so it keeps the plain read.
+  function _leagueStrategy() {
+    const leagueId = _S().currentLeagueId;
+    const perLeague = typeof window.App?.WR_KEYS?.GM_STRATEGY === 'function';
+    if (perLeague && leagueId != null && typeof window.WR?.GmMode?.effects === 'function') {
+      try {
+        const fx = window.WR.GmMode.effects(leagueId);
+        return fx && fx.hasStrategy ? fx.strategy : null;
+      } catch (e) { return null; }
+    }
+    return (window.GMStrategy?.getStrategy) ? window.GMStrategy.getStrategy() : null;
+  }
+
   function _strategy() {
-    return (window.GMStrategy?.getStrategy) ? window.GMStrategy.getStrategy() : {};
+    return _leagueStrategy() || {};
   }
 
   // Normalize position to fantasy-relevant canonical (RB, WR, QB, TE, DL, LB, DB)
@@ -230,7 +247,7 @@
   // authored in that voice directly (seeded variation elsewhere is untouched).
 
   function _gmStrategy() {
-    return window.GMStrategy?.getStrategy?.() || {
+    return _leagueStrategy() || {
       mode: 'balanced_rebuild', targetPositions: [], sellPositions: [],
       aggression: 'medium', untouchables: [],
     };
