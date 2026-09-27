@@ -108,17 +108,74 @@
     return normalized;
   }
 
-  function getStrategy() {
+  function _readStored() {
     try {
       const raw = localStorage.getItem(STRATEGY_KEY);
-      return normalizeStrategy(raw ? JSON.parse(raw) : null);
-    } catch(e) { return normalizeStrategy(); }
+      const parsed = raw ? JSON.parse(raw) : null;
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch (e) { return null; }
+  }
+
+  // War Room keeps a per-league copy of the strategy (WrStorage key
+  // wr_gm_strategy_<leagueId>). Scout has no such store, so this is always
+  // null there.
+  function _leagueRecord(leagueId) {
+    try {
+      const keys = window.App && window.App.WR_KEYS;
+      const store = window.App && window.App.WrStorage;
+      if (!keys || typeof keys.GM_STRATEGY !== 'function' || !store || typeof store.get !== 'function') return null;
+      const rec = store.get(keys.GM_STRATEGY(leagueId));
+      return rec && typeof rec === 'object' && !Array.isArray(rec) ? rec : null;
+    } catch (e) { return null; }
+  }
+
+  // getStrategy()          → the one stored strategy (Scout's model; unchanged).
+  // getStrategy(leagueId)  → that stored strategy ONLY if it belongs to this
+  //                          league, otherwise null (callers then read their
+  //                          per-league copy). This used to ignore leagueId, so
+  //                          a plan saved in league A steered league B's trade
+  //                          finder, FA filters, draft board and Alex prompts.
+  //
+  // Ownership is the `leagueId` stamp that War Room writes on every save
+  // (strategy editor, GM Mode presets). Strategies saved before the stamp
+  // existed (or only from Scout) carry none. Those are NOT dropped: an
+  // unstamped strategy still applies to any league that has no newer copy of
+  // its own — which is exactly what that league showed before this fix, since
+  // opening a league copied the shared strategy into its per-league record.
+  // The next War Room save stamps it, and from then on each league keeps its
+  // own plan. Reads never write, so nothing is re-synced or re-stamped here.
+  function getStrategy(leagueId) {
+    const stored = _readStored();
+    if (leagueId == null || leagueId === '') return normalizeStrategy(stored);
+    // Nothing saved: same default object as before (callers gate on the key).
+    if (!stored) return normalizeStrategy(null);
+    const stamp = stored.leagueId;
+    if (stamp != null && stamp !== '') {
+      return String(stamp) === String(leagueId) ? normalizeStrategy(stored) : null;
+    }
+    const own = _leagueRecord(leagueId);
+    if (own) {
+      const ownTs = Number(own.lastSyncedAt) || 0;
+      const storedTs = Number(stored.lastSyncedAt) || 0;
+      // The league's own copy is at least as new: use it (a newer unstamped
+      // save — e.g. an edit made in Scout — still reaches every league, as before).
+      if (ownTs >= storedTs) return null;
+    }
+    return normalizeStrategy(stored);
   }
 
   function saveStrategy(updates) {
     const current = getStrategy();
+    // A save for a DIFFERENT league than the one the stored strategy belongs
+    // to starts from defaults, so fields the caller didn't send (FA filters,
+    // sell rules…) never carry over from the other league. Saves without a
+    // leagueId (Scout) keep merging over the stored strategy as before.
+    const target = updates && updates.leagueId;
+    const owner = current.leagueId;
+    const sameLeague = target == null || target === '' || owner == null || owner === '' || String(owner) === String(target);
+    const base = sameLeague ? current : normalizeStrategy(null);
     // War Room owns GM Strategy; Scout edits the same shared strategy surface.
-    const merged = normalizeStrategy({ ...current, lastSyncedFrom: 'warroom', ...updates, version: (current.version || 0) + 1, lastSyncedAt: Date.now() });
+    const merged = normalizeStrategy({ ...base, lastSyncedFrom: 'warroom', ...updates, version: (current.version || 0) + 1, lastSyncedAt: Date.now() });
     localStorage.setItem(STRATEGY_KEY, JSON.stringify(merged));
     if (window.DhqEvents) window.DhqEvents.emit('strategy:changed', merged);
     // Fire-and-forget cross-device sync via Supabase. Failures are silent —

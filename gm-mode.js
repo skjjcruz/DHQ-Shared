@@ -108,15 +108,31 @@
         return LEGACY_MAP[mode] || 'compete';
     }
 
-    function getMode(leagueId) {
-        // Priority: shared global store (ONLY if it actually exists — see
-        // sharedStrategyStoreExists; getStrategy() otherwise returns a default
-        // that shadows the per-league value) → per-league WrStorage → default.
+    // window.GMStrategy (strategy.js) stores ONE strategy under a single
+    // localStorage key. It used to ignore leagueId, so the instant any league
+    // saved a plan, every other league read that same object here. Trust the
+    // shared store only when it belongs to the league being asked about:
+    // strategy.js getStrategy(leagueId) now returns null for another league's
+    // (or an out-of-date legacy) strategy, and the stamp check below repeats
+    // that guard in case an older strategy.js copy is loaded. A mismatch falls
+    // through to the genuinely per-league WrStorage record.
+    function _trustedGlobalStrategy(leagueId) {
         try {
-            if (sharedStrategyStoreExists() && window.GMStrategy && typeof window.GMStrategy.getStrategy === 'function') {
-                const s = window.GMStrategy.getStrategy(leagueId);
-                if (s && s.mode) return normalize(s.mode);
-            }
+            if (!sharedStrategyStoreExists() || !window.GMStrategy || typeof window.GMStrategy.getStrategy !== 'function') return null;
+            const s = window.GMStrategy.getStrategy(leagueId);
+            if (!s || typeof s !== 'object') return null;
+            if (leagueId != null && s.leagueId != null && s.leagueId !== '' && String(s.leagueId) !== String(leagueId)) return null;
+            return s;
+        } catch (e) { return null; }
+    }
+
+    function getMode(leagueId) {
+        // Priority: shared global store (ONLY if it actually exists AND is for
+        // this league — see _trustedGlobalStrategy) → per-league WrStorage →
+        // default.
+        try {
+            const s = _trustedGlobalStrategy(leagueId);
+            if (s && s.mode) return normalize(s.mode);
         } catch (e) { /* ignore */ }
         try {
             const keys = (window.App && window.App.WR_KEYS) || WR_KEYS;
@@ -152,12 +168,11 @@
         const preset = getPreset(mode);
         // Merge preset.config into the existing strategy so user's custom fields
         // (untouchable, sellRules, targetPositions/sellPositions if set) survive.
+        // Seeded via resolveStrategy (league-aware) rather than a raw
+        // GMStrategy read: applying a preset in league B must never start from
+        // whatever league A last saved and then write that into B's store.
         let existing = {};
-        try {
-            if (window.GMStrategy && typeof window.GMStrategy.getStrategy === 'function') {
-                existing = window.GMStrategy.getStrategy(leagueId) || {};
-            }
-        } catch (e) { /* ignore */ }
+        try { existing = resolveStrategy(leagueId) || {}; } catch (e) { /* ignore */ }
         const merged = {
             ...existing,
             ...(preset.config || {}),
@@ -239,14 +254,14 @@
     }
 
     // Resolve the persisted strategy with the SAME precedence league-detail uses
-    // for the header/badge: shared global store (only if it exists) → per-league
-    // WrStorage → last-active strategy. Reads App fresh (load-order safe).
+    // for the header/badge: shared global store (only if it exists and belongs
+    // to this league — see _trustedGlobalStrategy) → per-league WrStorage →
+    // last-active strategy (also league-checked: window._wrGmStrategy is a bare
+    // "whichever league touched it last" cache). Reads App fresh (load-order safe).
     function resolveStrategy(leagueId) {
         try {
-            if (sharedStrategyStoreExists() && window.GMStrategy && window.GMStrategy.getStrategy) {
-                const s = window.GMStrategy.getStrategy(leagueId);
-                if (s && typeof s === 'object') return s;
-            }
+            const s = _trustedGlobalStrategy(leagueId);
+            if (s && typeof s === 'object') return s;
         } catch (e) { /* ignore */ }
         try {
             const keys = (window.App && window.App.WR_KEYS) || WR_KEYS;
@@ -255,7 +270,10 @@
             const s = key && storage && storage.get && storage.get(key);
             if (s && typeof s === 'object') return s;
         } catch (e) { /* ignore */ }
-        return window._wrGmStrategy || {};
+        const last = window._wrGmStrategy;
+        if (last && typeof last === 'object'
+            && (leagueId == null || last.leagueId == null || last.leagueId === '' || String(last.leagueId) === String(leagueId))) return last;
+        return {};
     }
 
     function effects(leagueId) {
@@ -447,7 +465,13 @@
             if (bridging) return;
             bridging = true;
             try {
-                if (strategy && typeof strategy === 'object') window._wrGmStrategy = strategy;
+                // Only adopt it as the in-memory "current" plan when it is not
+                // stamped for a different league than the one open (a remote
+                // sync can deliver the plan another league saved).
+                const openLeague = window.S && window.S.currentLeagueId;
+                const foreign = strategy && strategy.leagueId != null && strategy.leagueId !== ''
+                    && openLeague != null && String(strategy.leagueId) !== String(openLeague);
+                if (strategy && typeof strategy === 'object' && !foreign) window._wrGmStrategy = strategy;
                 window.dispatchEvent(new CustomEvent('wr:gm-mode-changed', {
                     detail: { mode: strategy && strategy.mode, strategy, source: 'strategy:changed' },
                 }));
