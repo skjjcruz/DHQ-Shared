@@ -225,10 +225,13 @@
     finally { _syncInFlight = false; }
   }
 
-  // Check alignment of an action against the strategy
-  function checkAlignment(action) {
+  // Check alignment of an action against the strategy.
+  // `strategy` (optional): the plan to check against — War Room callers pass
+  // the open league's plan (see gm-engine _leagueStrategy); without it this
+  // reads the one stored strategy (Scout's model, unchanged).
+  function checkAlignment(action, strategy) {
     // action = { type: 'trade'|'waiver'|'draft', position, playerAge, direction: 'acquire'|'sell' }
-    const s = getStrategy();
+    const s = (strategy && typeof strategy === 'object') ? normalizeStrategy(strategy) : getStrategy();
     const position = normalizePosition(action.position || action.pos || '');
     let score = 0;
     let reasons = [];
@@ -261,8 +264,8 @@
   }
 
   // Track drift
-  function recordAction(action) {
-    const alignment = checkAlignment(action);
+  function recordAction(action, strategy) {
+    const alignment = checkAlignment(action, strategy);
     if (alignment.alignment === 'conflicts') {
       const drift = getDrift();
       drift.conflicts.push({ ...action, timestamp: Date.now(), reasons: alignment.reasons });

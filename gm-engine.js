@@ -143,7 +143,7 @@
 
     if (bestWaiver && bestWaiver.dhq >= waiverFloor) {
       const alignment = window.GMStrategy?.checkAlignment
-        ? window.GMStrategy.checkAlignment({ type: 'waiver', direction: 'acquire', position: topNeed, playerId: bestWaiver.pid })
+        ? window.GMStrategy.checkAlignment({ type: 'waiver', direction: 'acquire', position: topNeed, playerId: bestWaiver.pid }, _leagueStrategy() || {})
         : { alignment: 'partial' };
       return {
         type: 'waiver',
@@ -372,7 +372,7 @@
           : 'before_draft';
 
         const alignment = window.GMStrategy?.checkAlignment
-          ? window.GMStrategy.checkAlignment({ type: 'trade', direction: 'acquire', position: topNeed, playerId: theirTarget.pid })
+          ? window.GMStrategy.checkAlignment({ type: 'trade', direction: 'acquire', position: topNeed, playerId: theirTarget.pid }, _leagueStrategy() || {})
           : { alignment: 'partial' };
 
         bestMatch = {
