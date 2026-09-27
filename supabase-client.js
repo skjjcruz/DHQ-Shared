@@ -1893,6 +1893,31 @@ function describeAnalyticsTarget(el) {
     };
 }
 
+// Test-traffic stamp (owner ask 2026-09-27: "filter out test traffic").
+// Robots (automated browsers) and the owners' own devices tag every event so
+// Mission Control can leave them out. A device becomes an owner device once an
+// owner's Sleeper name is used on it (sticky, survives sign-out);
+// ?dhq_internal=1 / ?dhq_internal=0 marks or clears a device by hand. The
+// landing and connect pages carry the same stamp.
+const DHQ_OWNER_HANDLES = ['skjjcruz', 'bigloco'];
+function dhqInternalTag() {
+    try {
+        const q = new URLSearchParams(location.search).get('dhq_internal');
+        if (q === '1') localStorage.setItem('dhq_internal_v1', 'owner');
+        else if (q === '0') localStorage.removeItem('dhq_internal_v1');
+    } catch {}
+    try { if (navigator.webdriver) return 'automated'; } catch {}
+    try {
+        if (localStorage.getItem('dhq_internal_v1')) return 'owner';
+        const handle = String(getCurrentUsername() || '').toLowerCase();
+        if (handle && DHQ_OWNER_HANDLES.includes(handle)) {
+            localStorage.setItem('dhq_internal_v1', 'owner');
+            return 'owner';
+        }
+    } catch {}
+    return null;
+}
+
 function normalizeQueuedAnalyticsEvent(evt, username) {
     const eventId = evt?.event_id || 'evt_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     const eventName = evt?.event_name || evt?.eventName || evt?.name || 'unknown_event';
@@ -1905,6 +1930,10 @@ function normalizeQueuedAnalyticsEvent(evt, username) {
         ? (typeof rawTs === 'number' ? new Date(rawTs) : new Date(String(rawTs)))
         : null;
     const meta = Object.assign({}, safeAnalyticsMeta(evt?.metadata || {}));
+    if (meta.internal == null) {
+        const internal = dhqInternalTag();
+        if (internal) meta.internal = internal;
+    }
     if (!activeUsername && !evt?.user_id) {
         // Guest lane (owner ask 2026-09-17): no login, but the device knows the
         // Sleeper handle the guest connected with. Carry it in metadata — the
