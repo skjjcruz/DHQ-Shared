@@ -244,6 +244,15 @@
         set(GUEST_KEY, '1');
     }
 
+    // window.__dhqBusy: a counter live-update checks before reloading the
+    // page. Held while a sign-in reconcile or an account write is in flight,
+    // so a deploy never reloads underneath one.
+    function busy(promise) {
+        try { root.__dhqBusy = (root.__dhqBusy || 0) + 1; } catch (e) {}
+        var done = function () { try { root.__dhqBusy = Math.max(0, (root.__dhqBusy || 1) - 1); } catch (e) {} };
+        return Promise.resolve(promise).then(function (v) { done(); return v; }, function (err) { done(); throw err; });
+    }
+
     // ── server (fw-profile) ──
     function withTimeout(promise, ms, fallback) {
         var timer = null;
@@ -438,12 +447,12 @@
         var token = accountToken();
         if (!token) return Promise.resolve(false);
         var handle = localHandle();
-        return fetchServerPlatforms(token, opts.timeoutMs || 3000).then(function (r) {
+        return busy(fetchServerPlatforms(token, opts.timeoutMs || 3000).then(function (r) {
             var patch = r.ok ? patchFor(r.platforms, handle) : (handle ? { sleeper: handle } : {});
             if (!r.ok && handle) { var uid = localSleeperUserId(); if (uid) patch.sleeperUserId = uid; }
             if (!Object.keys(patch).length) { if (r.ok) del(UNSYNCED_KEY); return true; }
             return saveTracked(token, patch);
-        });
+        }));
     }
     function settle(promise, ms) { return withTimeout(promise, ms || 4000, false); }
 
@@ -460,6 +469,9 @@
     // Route on `onboarded` (a league source is bound), never on a stale
     // onboardingComplete another owner left behind.
     function reconcileAfterSignIn(session, opts) {
+        return busy(reconcile(session, opts));
+    }
+    function reconcile(session, opts) {
         opts = opts || {};
         var s = session || currentSession();
         var owner = sessionOwner(s);
@@ -553,9 +565,10 @@
         var swept = keysOf(store).filter(function (k) { return /^sb-.+-auth-token/.test(k); });
         return fixed.concat(swept);
     }
-    function clearCredentials() {
+    function clearCredentials(opts) {
+        var keepSupabase = !!(opts && opts.keepSupabase);
         [ls(), ss()].filter(Boolean).forEach(function (store) {
-            CREDENTIAL_KEYS.concat(DEVICE_SECRET_KEYS).concat(supabaseAuthKeys(store)).forEach(function (k) {
+            CREDENTIAL_KEYS.concat(DEVICE_SECRET_KEYS).concat(keepSupabase ? [] : supabaseAuthKeys(store)).forEach(function (k) {
                 try { store.removeItem(k); } catch (e) {}
             });
             // Per-league connector records keep their pointers; strip any
@@ -586,14 +599,16 @@
     // scope — never revoke the provider session on the user's other devices).
     function signOutClear(opts) {
         opts = opts || {};
-        var steps = [revenueCatLogOut()];
         var client = opts.supabase || null;
-        if (client && client.auth && typeof client.auth.signOut === 'function') {
-            steps.push(settle(Promise.resolve().then(function () { return client.auth.signOut({ scope: 'local' }); }), 1500));
-        }
-        // Credentials go now (synchronously), so a caller that navigates
-        // without awaiting still leaves nothing signed in behind.
-        clearCredentials();
+        var sdk = !!(client && client.auth && typeof client.auth.signOut === 'function');
+        // The app credentials go now (synchronously), so a caller that
+        // navigates without awaiting leaves no app session behind. The
+        // Supabase session is signed out through the SDK first (it needs the
+        // stored session to revoke THIS device's refresh token — local scope,
+        // other devices untouched), then its keys are swept.
+        clearCredentials({ keepSupabase: sdk });
+        var steps = [revenueCatLogOut()];
+        if (sdk) steps.push(settle(Promise.resolve().then(function () { return client.auth.signOut({ scope: 'local' }); }), 1500));
         return Promise.all(steps).then(function () { clearCredentials(); return true; }, function () { clearCredentials(); return true; });
     }
 
@@ -625,6 +640,7 @@
         saveServerHandle: saveServerHandle,
         pushIdentity: pushIdentity,
         needsSync: needsSync,
+        busy: busy,
         settle: settle,
         reconcileAfterSignIn: reconcileAfterSignIn,
         clearCredentials: clearCredentials,

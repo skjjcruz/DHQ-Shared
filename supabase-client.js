@@ -2347,8 +2347,14 @@ function inferPlatform(payload) {
 function detectSurface() {
     try {
         const ua = navigator.userAgent || '';
-        const apple = /iPhone|iPad|iPod|Macintosh/.test(ua);
-        const webview = apple && /AppleWebKit/.test(ua) && !/Safari\//.test(ua);
+        // iOS devices only: an iPhone/iPad/iPod user agent, or an iPad in
+        // desktop mode (it reports "Macintosh", but a Mac has no touch
+        // points). A Mac app's WKWebView also lacks the Safari/ token and was
+        // mislabelled ios_app.
+        const iosUa = /iPhone|iPad|iPod/.test(ua);
+        let ipadDesktop = false;
+        try { ipadDesktop = /Macintosh/.test(ua) && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1; } catch (e) {}
+        const webview = (iosUa || ipadDesktop) && /AppleWebKit/.test(ua) && !/Safari\//.test(ua);
         return webview ? 'ios_app' : 'web';
     } catch (e) { return 'web'; }
 }
