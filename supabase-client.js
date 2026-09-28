@@ -491,8 +491,10 @@ function isConfigured() {
 // Scout (dynastyhq_username). Owner-stamped (identity.js): a cache stamped
 // for a different owner than the current session is someone else's handle
 // and is never returned. Scout's dynastyhq_username (written on the shared
-// skjjcruz.github.io origin, never cleared) is ignored whenever an app
-// account is signed in — the account's own handle is the only truth then.
+// skjjcruz.github.io origin, never cleared) is ignored on a page that runs
+// the owner-stamped identity (Dynasty HQ loads identity.js) whenever an app
+// account is signed in — the account's own handle is the only truth there.
+// Scout's own pages (no identity.js) keep reading it as before.
 function getCurrentUsername() {
     const identity = window.OD && window.OD.identity;
     try {
@@ -507,7 +509,7 @@ function getCurrentUsername() {
             if (h) return h;
         }
     } catch {}
-    if (getAppSession()) return null;
+    if (identity && getAppSession()) return null;
     // War Room Scout auth
     try {
         return localStorage.getItem('dynastyhq_username') || null;
