@@ -123,6 +123,9 @@ function _clearDeadAppSession(reason) {
         const legacy = JSON.parse(localStorage.getItem(SESSION_LS_KEY) || 'null');
         if (legacy?.token && _jwtExpired(legacy.token)) localStorage.removeItem(SESSION_LS_KEY);
     } catch {}
+    // Credentials only. The identity cache (od_auth_v1, od_profile_v1, league
+    // pointers — see identity.js) is NEVER touched here: a Sleeper handle is
+    // not a credential, and wiping it stranded users after every expiry.
     // Device secrets (ESPN/MFL logins, AI keys) are NOT wiped here: a 401 is
     // not proof of a deliberate revocation — the server answers 401 for a
     // transient app_users read failure too. The session is dropped; if someone
@@ -183,6 +186,11 @@ function _rehydrateLegacySession() {
         const legacy = JSON.parse(localStorage.getItem(SESSION_LS_KEY) || 'null');
         if (!legacy?.token || !_isLegacySessionToken(legacy.token) || _jwtExpired(legacy.token)) return null;
         const claims = _jwtClaims(legacy.token);
+        // Only this device's own legacy login: a leftover od_session_v1 from a
+        // different person (landing sign-ins never cleared it) must not sign
+        // them in. No stamp = a device from before owner stamping.
+        const stamp = localStorage.getItem('dhq_identity_owner_v1');
+        if (stamp && stamp !== 'legacy:' + String(claims.app_metadata.sleeper_username).toLowerCase()) return null;
         const expiresAt = legacy.expiresAt || (typeof claims.exp === 'number' ? new Date(claims.exp * 1000).toISOString() : null);
         const session = {
             token: legacy.token,
@@ -316,17 +324,25 @@ function _guardCredentialOwner() {
 _guardCredentialOwner();
 
 // Everything an explicit sign-out removes, minus navigation (callers decide
-// where to go). Session tokens for both the app account and the legacy Sleeper
-// login, the legacy local login, the guest flag (landing.html sends a guest
-// with a saved league straight back into the app, so a guest could not sign
-// out), the Supabase OAuth session, and the device secrets above.
+// where to go): credentials only. Session tokens for both the app account and
+// the legacy Sleeper login, the guest flag (landing.html sends a guest with a
+// saved league straight back into the app, so a guest could not sign out),
+// the Supabase OAuth session, and the device secrets above. The owner-stamped
+// identity cache (od_auth_v1, od_profile_v1, league pointers) stays: the
+// stamp in identity.js clears it when someone else signs in next. One
+// implementation — identity.js clearCredentials — when it is loaded.
 function clearSignedInState() {
-    clearDeviceSecrets();
-    clearOAuthPersistence();
-    for (const key of [FW_SESSION_KEY, SESSION_LS_KEY, 'od_auth_v1', 'wr_guest_v1']) {
-        try { localStorage.removeItem(key); } catch {}
+    const identity = window.OD && window.OD.identity;
+    if (identity && typeof identity.clearCredentials === 'function') {
+        try { identity.clearCredentials(); } catch {}
+    } else {
+        clearDeviceSecrets();
+        clearOAuthPersistence();
+        for (const key of [FW_SESSION_KEY, SESSION_LS_KEY, 'wr_guest_v1']) {
+            try { localStorage.removeItem(key); } catch {}
+        }
+        try { sessionStorage.removeItem(CREDENTIAL_OWNER_KEY); } catch {}
     }
-    try { sessionStorage.removeItem(CREDENTIAL_OWNER_KEY); } catch {}
     _supabase = null;
     _supabaseToken = null;
     _sessionSyncPromise = null;
@@ -365,6 +381,14 @@ function _jwtAgeHours(token) {
 // refresh.
 let _sessionSyncPromise = null;
 let _sessionSyncToken = null;
+// Session/profile reads give up after this long (hub never hangs, 2026-09-28).
+const SESSION_FETCH_TIMEOUT_MS = 8000;
+function _fetchCapped(url, opts, ms) {
+    if (typeof AbortController === 'undefined') return fetch(url, opts);
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), ms || SESSION_FETCH_TIMEOUT_MS);
+    return fetch(url, Object.assign({}, opts, { signal: ctrl.signal })).finally(() => clearTimeout(timer));
+}
 function _storedSessionToken() {
     try {
         const raw = localStorage.getItem(FW_SESSION_KEY);
@@ -399,13 +423,15 @@ function ensureFreshAppSession() {
             const age = _jwtAgeHours(session.token);
             const stale = age === null || age > 24;
             if (!needsRepair && !stale) return getAppSession();
-            const resp = await fetch(BACKEND_ENDPOINTS.fwRefreshSession, {
+            // Capped: a stalled refresh must never hold the hub on "Loading…"
+            // (the abort lands in the catch below = network hiccup).
+            const resp = await _fetchCapped(BACKEND_ENDPOINTS.fwRefreshSession, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${session.token}`,
                     'apikey': SUPABASE_ANON,
                 },
-            });
+            }, SESSION_FETCH_TIMEOUT_MS);
             if (resp.ok) {
                 const data = await resp.json();
                 if (data?.token && data?.user?.id) {
@@ -460,16 +486,28 @@ function isConfigured() {
 }
 
 // ── Username helper ───────────────────────────────────────────
-// Works for both War Room (od_auth_v1) and War Room Scout (dynastyhq_username)
+// Works for both War Room (od_auth_v1, either shape: {username} from the
+// connect page / login.html, {sleeperUsername} from the hub) and War Room
+// Scout (dynastyhq_username). Owner-stamped (identity.js): a cache stamped
+// for a different owner than the current session is someone else's handle
+// and is never returned. Scout's dynastyhq_username (written on the shared
+// skjjcruz.github.io origin, never cleared) is ignored whenever an app
+// account is signed in — the account's own handle is the only truth then.
 function getCurrentUsername() {
-    // War Room auth
+    const identity = window.OD && window.OD.identity;
+    try {
+        if (identity && typeof identity.cacheIsMine === 'function' && !identity.cacheIsMine()) return null;
+    } catch {}
     try {
         const raw = localStorage.getItem('od_auth_v1');
         if (raw) {
             const auth = JSON.parse(raw);
-            if (auth?.sleeperUsername || auth?.username) return auth.sleeperUsername || auth.username;
+            const h = (typeof auth?.sleeperUsername === 'string' && auth.sleeperUsername.trim())
+                || (typeof auth?.username === 'string' && auth.username.trim());
+            if (h) return h;
         }
     } catch {}
+    if (getAppSession()) return null;
     // War Room Scout auth
     try {
         return localStorage.getItem('dynastyhq_username') || null;
@@ -623,6 +661,24 @@ window.OD.callAI = async function({ type, context }) {
     });
     if (!response.ok) {
         const err = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+            // "Valid session token required." — the stored session was revoked
+            // (password change elsewhere), the account is gone, or this is a
+            // guest. Say it in plain words; a signed-in user also gets the
+            // shell's "session ended" notice. Nothing is cleared here: a 401
+            // can be a transient server read failure.
+            const signedIn = !!token;
+            if (signedIn) {
+                try { window.dispatchEvent(new CustomEvent('dhq:session-expired', { detail: { reason: 'ai-401' } })); } catch {}
+            }
+            const error = new Error(signedIn
+                ? 'Your session ended. Sign in again to keep using Alex.'
+                : 'Sign in to a free Dynasty HQ account to use Alex.');
+            error.status = 401;
+            error.sessionExpired = signedIn;
+            error.serverMessage = err.error || null;
+            throw error;
+        }
         const error = new Error(err.error || `AI call failed (${response.status})`);
         error.status = response.status;
         if (err.usage) error.usage = err.usage;
@@ -697,13 +753,13 @@ window.OD.loadProfile = async function() {
     const appSession = isConfigured() ? await ensureFreshAppSession() : getAppSession();
     if (appSession?.token && isConfigured()) {
         try {
-            const resp = await fetch(BACKEND_ENDPOINTS.fwProfile, {
+            const resp = await _fetchCapped(BACKEND_ENDPOINTS.fwProfile, {
                 method: 'GET',
                 headers: {
                     'Authorization': `Bearer ${appSession.token}`,
                     'apikey': SUPABASE_ANON,
                 },
-            });
+            }, SESSION_FETCH_TIMEOUT_MS);
             if (resp.ok) {
                 const data = await resp.json();
                 const user = data?.user || {};
@@ -740,12 +796,17 @@ window.OD.loadProfile = async function() {
     };
 };
 
+// Resolves true once the server confirmed the write. keepalive: the hub
+// reloads right after connecting, and a plain fetch died with the page — the
+// write never reached the server (B2, 2026-09-28). Callers that navigate
+// still await it (capped) before leaving.
 window.OD.savePlatformUsernames = async function(platformUsernames) {
     const appSession = getAppSession();
     if (!appSession?.token || !isConfigured()) return false;
     try {
         const resp = await fetch(BACKEND_ENDPOINTS.fwProfile, {
             method: 'POST',
+            keepalive: true,
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${appSession.token}`,
@@ -2338,6 +2399,22 @@ function dhqInternalTag() {
     return null;
 }
 
+// Which build sent the event: window.DHQ_BUILD when a page sets it, else the
+// <meta name="dhq-build"> the deploy stamps into every self-updating page
+// (scripts/build-deploy.cjs; js/shared/live-update.js reads the same tag).
+// None found (local dev, an unstamped page) → no field; never invented.
+function currentBuildId() {
+    try {
+        if (typeof window.DHQ_BUILD === 'string' && window.DHQ_BUILD.trim()) return window.DHQ_BUILD.trim().slice(0, 80);
+    } catch {}
+    try {
+        const m = document.querySelector && document.querySelector('meta[name="dhq-build"]');
+        const v = m && (m.content || (m.getAttribute && m.getAttribute('content')));
+        if (typeof v === 'string' && v.trim()) return v.trim().slice(0, 80);
+    } catch {}
+    return null;
+}
+
 function normalizeQueuedAnalyticsEvent(evt, username) {
     const eventId = evt?.event_id || 'evt_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
     const eventName = evt?.event_name || evt?.eventName || evt?.name || 'unknown_event';
@@ -2353,6 +2430,10 @@ function normalizeQueuedAnalyticsEvent(evt, username) {
     if (meta.internal == null) {
         const internal = dhqInternalTag();
         if (internal) meta.internal = internal;
+    }
+    if (meta.build == null) {
+        const build = currentBuildId();
+        if (build) meta.build = build;
     }
     if (!activeUsername && !evt?.user_id) {
         // Guest lane (owner ask 2026-09-17): no login, but the device knows the
@@ -2664,11 +2745,19 @@ window.OD.signInWithApple = function() {
     });
 };
 
-window.OD.signOut = async function() {
-    const client = getClient();
-    // Local-only SDK sign-out, capped: a dead network must not strand the
-    // user on a page that still looks signed in.
-    if (client) {
+// THE sign-out (every surface: core.js dhqSignOut, Settings, landing
+// ?signout, connect "Not you?"). Local-only SDK sign-out (never revokes the
+// Google/Apple session on the user's other devices), RevenueCat logOut when
+// the native bridge has it, then clearSignedInState — credentials only; the
+// owner-stamped identity cache stays. Capped: a dead network must not strand
+// the user on a page that still looks signed in. Resolves; never rejects.
+window.OD.signOutClear = async function() {
+    let client = null;
+    try { client = getClient(); } catch {}
+    const identity = window.OD.identity;
+    if (identity && typeof identity.signOutClear === 'function') {
+        try { await identity.signOutClear({ supabase: client }); } catch {}
+    } else if (client) {
         let timer = null;
         await Promise.race([
             Promise.resolve().then(() => client.auth.signOut({ scope: 'local' })).catch(() => {}),
@@ -2676,9 +2765,12 @@ window.OD.signOut = async function() {
         ]);
         if (timer) clearTimeout(timer);
     }
-    // Session keys + ESPN/MFL logins + personal AI keys + Supabase OAuth
-    // persistence (see SIGN-OUT HYGIENE).
     clearSignedInState();
+    return true;
+};
+
+window.OD.signOut = async function() {
+    await window.OD.signOutClear();
     window.location.reload();
 };
 

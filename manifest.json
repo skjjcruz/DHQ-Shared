@@ -13,6 +13,7 @@
     "espn-api.js",
     "mfl-api.js",
     "yahoo-api.js",
+    "identity.js",
     "supabase-client.js",
     "tier.js",
     "pick-value-model.js",
