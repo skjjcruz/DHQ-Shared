@@ -21,8 +21,16 @@
 //   • Gates never destroy the identity cache (a token is a credential; a
 //     Sleeper handle is not).
 //
-// ESPN/MFL league pointers are not on the server yet (fw-profile keeps only
-// `sleeper`), so they stay device-local — but owner-stamped like the rest.
+// Server shape (fw-profile GET, and — once deployed — the fw-signin /
+// fw-oauth-sync / fw-refresh-session responses as `platformUsernames`):
+//   { sleeper?, sleeperUserId?, espn?: [{leagueId,year,teamId}],
+//     mfl?: [{leagueId,year,franchiseId}] }   ({} none on file, null unknown)
+// fw-profile POST merges; espn/mfl are complete lists (≤10, [] clears), so
+// this module only ever sends the server's list plus this device's league,
+// never a bare local list and never []. Pointers only — never espn_s2, SWID
+// or an MFL API key. An older fw-profile keeps only `sleeper` and ignores the
+// rest, so sending the pointers early is harmless.
+
 // ══════════════════════════════════════════════════════════════════
 (function (root) {
     'use strict';
@@ -240,18 +248,129 @@
             new Promise(function (resolve) { timer = setTimeout(function () { resolve(fallback); }, ms); }),
         ]).then(function (v) { if (timer) clearTimeout(timer); return v; });
     }
-    // platformUsernames.sleeper is a string today; accept {username} too.
-    function serverHandleOf(data) {
-        var p = data && (data.platformUsernames || (data.profile && data.profile.platforms) || data.platforms);
-        if (!p || typeof p !== 'object') return null;
-        var s = p.sleeper;
-        if (s && typeof s === 'object') return clean(s.username) || clean(s.sleeperUsername);
-        return clean(s) || clean(p.sleeperUsername);
+    // ── platform pointers (client-side mirror of _shared/platforms.ts) ──
+    var MAX_LEAGUES = 10;
+    function digits(v, max) {
+        if (typeof v === 'number' && Number.isSafeInteger(v) && v >= 0) v = String(v);
+        if (typeof v !== 'string') return null;
+        v = v.trim();
+        return new RegExp('^\\d{1,' + max + '}$').test(v) ? v : null;
     }
-    // GET the account's server profile. {ok, status, handle}; ok:false on a
-    // network error, a timeout (ms, default 6s) or a non-2xx answer.
-    function fetchServerHandle(token, ms) {
-        if (!token || typeof root.fetch !== 'function') return Promise.resolve({ ok: false, status: 0, handle: null });
+    function yearOf(v) {
+        var n = typeof v === 'number' ? v : (typeof v === 'string' && /^\d{4}$/.test(v.trim()) ? Number(v.trim()) : NaN);
+        var max = new Date().getUTCFullYear() + 1;
+        return Number.isInteger(n) && n >= 2000 && n <= max ? n : null;
+    }
+    function optId(v, max) {
+        if (v === undefined || v === null || v === '') return { ok: true, v: null };
+        var d = digits(v, max);
+        return d === null ? { ok: false } : { ok: true, v: d };
+    }
+    function espnEntry(e) {
+        if (!e || typeof e !== 'object') return null;
+        var id = digits(e.leagueId, 12), y = yearOf(e.year), t = optId(e.teamId, 4);
+        return id && y !== null && t.ok ? { leagueId: id, year: y, teamId: t.v } : null;
+    }
+    function mflEntry(e) {
+        if (!e || typeof e !== 'object') return null;
+        var id = digits(e.leagueId, 10), y = yearOf(e.year), f = optId(e.franchiseId, 4);
+        return id && y !== null && f.ok ? { leagueId: id, year: y, franchiseId: f.v === null ? null : f.v.padStart(4, '0') } : null;
+    }
+    function listOf(raw, parse) {
+        return (Array.isArray(raw) ? raw : []).map(parse).filter(Boolean).slice(0, MAX_LEAGUES);
+    }
+    // Server platforms → {sleeper, sleeperUserId, espn[], mfl[]}; null when
+    // the value is not an object (null = "unknown, ask fw-profile").
+    function normalizePlatforms(p) {
+        if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+        var s = p.sleeper;
+        var handle = s && typeof s === 'object' ? (clean(s.username) || clean(s.sleeperUsername)) : (clean(s) || clean(p.sleeperUsername));
+        var uid = (s && typeof s === 'object' && s.userId) || p.sleeperUserId;
+        return {
+            sleeper: handle || null,
+            sleeperUserId: handle ? digits(uid, 32) : null,
+            espn: listOf(p.espn, espnEntry),
+            mfl: listOf(p.mfl, mflEntry),
+        };
+    }
+    function serverPlatformsOf(data) {
+        if (!data || typeof data !== 'object') return null;
+        if (data.platformUsernames !== undefined) return normalizePlatforms(data.platformUsernames);
+        if (data.profile && data.profile.platforms) return normalizePlatforms(data.profile.platforms);
+        return normalizePlatforms(data.platforms);
+    }
+    // This device's own league pointers (one per platform), in server shape.
+    function localPointers() {
+        return {
+            espn: espnEntry({ leagueId: get('espn_league_id'), year: get('espn_year') || String(new Date().getUTCFullYear()), teamId: get('espn_team_id') }),
+            mfl: mflEntry({ leagueId: get('mfl_league_id'), year: get('mfl_year') || String(new Date().getUTCFullYear()), franchiseId: get('mfl_franchise_id') }),
+        };
+    }
+    function localSleeperUserId() {
+        var a = readJSON(AUTH_KEY), p = readJSON(PROFILE_KEY);
+        return digits((a && a.sleeperUserId) || (p && p.sleeperUserId) || '', 32);
+    }
+    var keyOf = function (e) { return e.leagueId + ':' + e.year; };
+    // The server's list with this device's league in it (replaced in place
+    // when the same league+season is there, else put first); capped.
+    function withLocal(list, entry) {
+        list = (list || []).slice();
+        if (!entry) return list;
+        var i = list.findIndex(function (e) { return keyOf(e) === keyOf(entry); });
+        if (i >= 0) { list[i] = entry; return list; }
+        return [entry].concat(list).slice(0, MAX_LEAGUES);
+    }
+    function sameList(a, b) { return JSON.stringify(a || []) === JSON.stringify(b || []); }
+    // The best server pointer to restore: the latest season, first listed.
+    function pick(list) {
+        var best = null;
+        (list || []).forEach(function (e) { if (!best || e.year > best.year) best = e; });
+        return best;
+    }
+    // Server pointers → the mfl_* / espn_* keys, only where this device has none.
+    function restorePointers(P) {
+        var restored = [];
+        if (!P) return restored;
+        if (!get('espn_league_id')) {
+            var e = pick(P.espn);
+            if (e) {
+                set('espn_league_id', e.leagueId); set('espn_year', String(e.year));
+                if (e.teamId) set('espn_team_id', e.teamId); else del('espn_team_id');
+                restored.push('espn');
+            }
+        }
+        if (!get('mfl_league_id')) {
+            var m = pick(P.mfl);
+            if (m) {
+                set('mfl_league_id', m.leagueId); set('mfl_year', String(m.year));
+                if (m.franchiseId) set('mfl_franchise_id', m.franchiseId); else del('mfl_franchise_id');
+                restored.push('mfl');
+            }
+        }
+        return restored;
+    }
+    // What this device knows that the server doesn't: {} when nothing.
+    function patchFor(P, handle) {
+        P = P || { sleeper: null, espn: [], mfl: [] };
+        var patch = {};
+        handle = clean(handle);
+        if (handle && !same(P.sleeper, handle)) {
+            patch.sleeper = handle;
+            var uid = localSleeperUserId();
+            if (uid) patch.sleeperUserId = uid;
+        }
+        var lp = localPointers();
+        var espn = withLocal(P.espn, lp.espn);
+        if (!sameList(espn, P.espn)) patch.espn = espn;
+        var mfl = withLocal(P.mfl, lp.mfl);
+        if (!sameList(mfl, P.mfl)) patch.mfl = mfl;
+        return patch;
+    }
+
+    // GET the account's server platforms. {ok, status, platforms}; ok:false
+    // on a network error, a timeout (ms, default 6s) or a non-2xx answer.
+    function fetchServerPlatforms(token, ms) {
+        if (!token || typeof root.fetch !== 'function') return Promise.resolve({ ok: false, status: 0, platforms: null });
         var cfg = config();
         var ctrl = typeof root.AbortController === 'function' ? new root.AbortController() : null;
         var req = root.fetch(cfg.fwProfile, {
@@ -259,29 +378,54 @@
             headers: { 'Authorization': 'Bearer ' + token, 'apikey': cfg.anon },
             signal: ctrl ? ctrl.signal : undefined,
         }).then(function (resp) {
-            if (!resp.ok) return { ok: false, status: resp.status, handle: null };
-            return resp.json().then(function (data) { return { ok: true, status: resp.status, handle: serverHandleOf(data) }; },
-                function () { return { ok: false, status: resp.status, handle: null }; });
+            if (!resp.ok) return { ok: false, status: resp.status, platforms: null };
+            return resp.json().then(function (data) {
+                return { ok: true, status: resp.status, platforms: serverPlatformsOf(data) || normalizePlatforms({}) };
+            }, function () { return { ok: false, status: resp.status, platforms: null }; });
         });
-        return withTimeout(req, ms || 6000, { ok: false, status: 0, handle: null, timedOut: true })
+        return withTimeout(req, ms || 6000, { ok: false, status: 0, platforms: null, timedOut: true })
             .then(function (r) { if (r && r.timedOut && ctrl) { try { ctrl.abort(); } catch (e) {} } return r; });
     }
-    // POST the Sleeper handle to the account. keepalive, so a navigation or
-    // reload right after cannot cancel it (the hub's reload used to).
-    // Resolves true/false; never rejects. Callers that navigate await it
-    // through settle(p, ms).
-    function saveServerHandle(token, handle) {
-        handle = clean(handle);
-        if (!token || !handle || typeof root.fetch !== 'function') return Promise.resolve(false);
+    function fetchServerHandle(token, ms) {
+        return fetchServerPlatforms(token, ms).then(function (r) {
+            return { ok: r.ok, status: r.status, handle: r.platforms ? r.platforms.sleeper : null };
+        });
+    }
+    // POST a platforms patch (merge on the server). keepalive, so a
+    // navigation or reload right after cannot cancel it (the hub's reload
+    // used to). Resolves true/false; never rejects. Callers that navigate
+    // await it through settle(p, ms).
+    function savePlatforms(token, patch) {
+        if (!token || !patch || !Object.keys(patch).length || typeof root.fetch !== 'function') return Promise.resolve(false);
         var cfg = config();
         try {
             return root.fetch(cfg.fwProfile, {
                 method: 'POST',
                 keepalive: true,
                 headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token, 'apikey': cfg.anon },
-                body: JSON.stringify({ platformUsernames: { sleeper: handle } }),
+                body: JSON.stringify({ platformUsernames: patch }),
             }).then(function (r) { return !!(r && r.ok); }, function () { return false; });
         } catch (e) { return Promise.resolve(false); }
+    }
+    function saveServerHandle(token, handle) {
+        handle = clean(handle);
+        return handle ? savePlatforms(token, { sleeper: handle }) : Promise.resolve(false);
+    }
+    // After a connect (connect page, hub): record this device's handle and
+    // league pointers on the signed-in account. Reads the server list first so
+    // a league connected on another device is kept (espn/mfl are complete
+    // lists); if that read fails only the handle is sent. No account → false.
+    function pushIdentity(opts) {
+        opts = opts || {};
+        var token = accountToken();
+        if (!token) return Promise.resolve(false);
+        var handle = localHandle();
+        return fetchServerPlatforms(token, opts.timeoutMs || 3000).then(function (r) {
+            var patch = r.ok ? patchFor(r.platforms, handle) : (handle ? { sleeper: handle } : {});
+            if (!r.ok && handle) { var uid = localSleeperUserId(); if (uid) patch.sleeperUserId = uid; }
+            if (!Object.keys(patch).length) return true;
+            return savePlatforms(token, patch);
+        });
     }
     function settle(promise, ms) { return withTimeout(promise, ms || 4000, false); }
 
@@ -329,38 +473,46 @@
         }
 
         var token = s.token;
-        var local = localHandle();
-        return fetchServerHandle(token, opts.timeoutMs || 6000).then(function (server) {
-            if (server.ok && server.handle) {
+        // A sign-in response that already carries the account's platforms
+        // (fw-signin / fw-oauth-sync / fw-refresh-session) saves the GET.
+        // Only for a session handed in by the caller — a copy sitting in
+        // storage could be stale. Absent or null → ask fw-profile.
+        var embedded = session && session.platformUsernames !== undefined ? normalizePlatforms(session.platformUsernames) : null;
+        var read = embedded
+            ? Promise.resolve({ ok: true, status: 200, platforms: embedded })
+            : fetchServerPlatforms(token, opts.timeoutMs || 6000);
+        return read.then(function (server) {
+            var local = localHandle();
+            if (!server.ok) {
+                // Server unreachable: this owner's device copy stands in.
+                result.handle = local ? writeHandle(local) : null;
+                result.source = local ? 'offline' : 'none';
+                result.onboarded = hasLeagueSource();
+                return result;
+            }
+            var P = server.platforms || normalizePlatforms({});
+            if (P.sleeper) {
                 // Server wins. A guest's own handle that disagrees with the
                 // account they signed in to was the guest's, not the account's.
-                if (fromGuest && !opts.isNew && local && !same(local, server.handle)) {
+                if (fromGuest && !opts.isNew && local && !same(local, P.sleeper)) {
                     clearDeviceIdentity(); result.cleared = true;
                     setStamp(owner);
                 }
-                result.handle = writeHandle(server.handle);
+                result.handle = writeHandle(P.sleeper, P.sleeperUserId ? { sleeperUserId: P.sleeperUserId } : null);
                 result.source = 'server';
-                result.onboarded = true;
-                return result;
-            }
-            if (local) {
+            } else if (local) {
                 result.handle = writeHandle(local);
-                if (server.ok) {
-                    // The server has no handle; this device's belongs to this
-                    // owner (same stamp, first run, or an adopted guest): upload.
-                    result.source = 'local';
-                    result.uploaded = true;
-                    return settle(saveServerHandle(token, local), 3000).then(function () {
-                        result.onboarded = true;
-                        return result;
-                    });
-                }
-                result.source = 'offline';
-                result.onboarded = true;
-                return result;
+                result.source = 'local';
             }
+            result.restored = restorePointers(P);
+            // What only this device knows (it is this owner's — same stamp,
+            // first run, or an adopted guest): upload it.
+            var patch = patchFor(P, result.handle);
             result.onboarded = hasLeagueSource();
-            return result;
+            if (!Object.keys(patch).length) return result;
+            result.uploaded = true;
+            result.patch = patch;
+            return settle(savePlatforms(token, patch), 3000).then(function () { return result; });
         }).catch(function () {
             result.handle = localHandle();
             result.onboarded = hasLeagueSource();
@@ -444,8 +596,13 @@
         accountToken: accountToken,
         clearDeviceIdentity: clearDeviceIdentity,
         beginGuest: beginGuest,
+        normalizePlatforms: normalizePlatforms,
+        localPointers: localPointers,
+        fetchServerPlatforms: fetchServerPlatforms,
         fetchServerHandle: fetchServerHandle,
+        savePlatforms: savePlatforms,
         saveServerHandle: saveServerHandle,
+        pushIdentity: pushIdentity,
         settle: settle,
         reconcileAfterSignIn: reconcileAfterSignIn,
         clearCredentials: clearCredentials,
