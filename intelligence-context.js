@@ -1670,7 +1670,7 @@
     const reasons = [
       { code: fit.need ? 'roster_need' : 'age_window', detail: needDetail, weight: fit.need ? 1.3 : 0.8 },
     ].concat(formatReasons || []);
-    if (faab) reasons.push({ code: 'faab_efficiency', detail: `Suggested bid range ${faab.lo != null ? `$${faab.lo}-${faab.hi}` : 'is controlled'} against remaining FAAB.`, weight: 0.8 });
+    if (faab) reasons.push({ code: 'faab_efficiency', detail: `Estimated bid ${faab.lo != null ? (faab.lo === faab.hi ? `$${faab.lo}` : `$${faab.lo}–${faab.hi}`) : 'is controlled'} against remaining FAAB (DHQ estimate, not a price).`, weight: 0.8 });
     if (ppg > 0) reasons.push({ code: 'production_signal', detail: `${ppg.toFixed ? ppg.toFixed(1) : ppg} PPG adds a production floor to the recommendation.`, weight: 0.7 });
     const evidence = [
       buildSourceEvidence({ sourceKey: 'league_roster', source: 'league.roster', signal: 'fit', value: fit.short || fit.label || (fit.need ? 'need' : 'depth'), freshness: 'live' }),
