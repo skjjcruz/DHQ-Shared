@@ -65,8 +65,17 @@
         GUEST_KEY, UNSYNCED_KEY,
     ];
     // Per-league connector records (league pointers + team; secrets are
-    // stripped by the connectors). Keyed by league, so a clean prefix sweep.
-    var DEVICE_IDENTITY_PREFIXES = ['espn_creds_', 'mfl_creds_'];
+    // stripped by the connectors) and the owner's own per-league work — tags,
+    // league docs/notes, draft boards, FA targets, grudges, GM strategy, chat,
+    // saved trades. All keyed by clean prefixes, so a prefix sweep. (The
+    // account copies live in the cloud and reload for their owner.)
+    var DEVICE_IDENTITY_PREFIXES = [
+        'espn_creds_', 'mfl_creds_',
+        'player_tags_', 'dhq_league_doc_', 'draft_board_', 'od_fa_targets_v1_', 'od_grudges_v1_',
+        'wr_bigboard_', 'wr_gm_strategy_', 'wr_chat_', 'wr_saved_trades_',
+    ];
+    // Single per-owner stores (not league-keyed).
+    var DEVICE_IDENTITY_EXTRA_KEYS = ['od_calendar_events', 'od_earnings_entries', 'scout_field_log_v1', 'wr_last_league_id', 'wr_last_league_name'];
 
     // Platform logins + personal AI keys. Keep in lockstep with
     // DEVICE_SECRET_KEYS in supabase-client.js (a test pins it).
@@ -223,6 +232,7 @@
 
     function clearDeviceIdentity() {
         DEVICE_IDENTITY_KEYS.forEach(del);
+        DEVICE_IDENTITY_EXTRA_KEYS.forEach(del);
         var stores = [ls(), ss()].filter(Boolean);
         stores.forEach(function (store) {
             keysOf(store).forEach(function (k) {
@@ -460,7 +470,9 @@
     // Call after EVERY successful sign-in (email, Google/Apple, handoff,
     // repaired session, legacy login, new account) and at app boot when the
     // stamp doesn't match the session. `session` defaults to fw_session_v1.
-    // opts.isNew: the account was just created. opts.timeoutMs: server read.
+    // opts.isNew: the account was just created. opts.boot: called at app boot
+    // for a session this device already held (not a sign-in). opts.timeoutMs:
+    // server read.
     // Resolves (never rejects) to
     //   { owner, handle, source: 'server'|'local'|'offline'|'legacy'|'none',
     //     onboarded, cleared, uploaded, serverOk, restored, patch }
@@ -486,10 +498,15 @@
         var credOwner = null;
         try { credOwner = (ss() && ss().getItem(CREDENTIAL_OWNER_KEY)) || null; } catch (e) {}
         if (credOwner && !/^(account|legacy):/.test(credOwner)) credOwner = null;
+        // An UNSTAMPED cache (a device from before owner stamping) is trusted
+        // only at boot with a session this device already held (opts.boot:
+        // the user was signed in when this build first ran). On a fresh
+        // sign-in it is treated as someone else's: cleared, never uploaded —
+        // the server handle (if any) decides, else the connect page.
         var mine;
         if (prior === owner) mine = true;
-        else if (fromGuest) mine = true;                          // a guest adopting their leagues
-        else if (!prior) mine = !(credOwner && credOwner !== owner); // first run on this build
+        else if (fromGuest) mine = true;                          // a guest (flag set now) adopting their leagues
+        else if (!prior) mine = !!opts.boot && !(credOwner && credOwner !== owner);
         else mine = false;                                        // someone else's cache
         if (opts.isNew && !fromGuest) mine = false;               // a new account starts clean
         if (!mine) { clearDeviceIdentity(); result.cleared = true; }
