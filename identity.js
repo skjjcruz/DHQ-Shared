@@ -45,6 +45,10 @@
     var PROFILE_KEY = 'od_profile_v1';
     var LOCKED_KEY = 'od_locked_username_v2';
     var CREDENTIAL_OWNER_KEY = 'dhq_credentials_owner_v1';
+    // Set (to the owner) while an account write is outstanding; cleared when
+    // the server confirmed it. A write that failed or died with the page is
+    // retried by the next boot's reconcile.
+    var UNSYNCED_KEY = 'dhq_identity_unsynced_v1';
     var DEFAULT_SUPABASE_URL = 'https://sxshiqyxhhifvtfqawbq.supabase.co';
     var DEFAULT_SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN4c2hpcXl4aGhpZnZ0ZnFhd2JxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MTExMzAsImV4cCI6MjA4ODI4NzEzMH0.zJi9W986ZLaANiZN6pt6ReFwaQU6yPeidsERIWo2ibI';
 
@@ -58,7 +62,7 @@
         'od_display_name', 'od_avatar_emoji', 'dhq_owner_club_v1',
         'mfl_league_id', 'mfl_year', 'mfl_franchise_id',
         'espn_league_id', 'espn_year', 'espn_team_id',
-        GUEST_KEY,
+        GUEST_KEY, UNSYNCED_KEY,
     ];
     // Per-league connector records (league pointers + team; secrets are
     // stripped by the connectors). Keyed by league, so a clean prefix sweep.
@@ -407,6 +411,20 @@
             }).then(function (r) { return !!(r && r.ok); }, function () { return false; });
         } catch (e) { return Promise.resolve(false); }
     }
+    // savePlatforms + the outstanding-write marker (see UNSYNCED_KEY).
+    function saveTracked(token, patch) {
+        var owner = sessionOwner(currentSession());
+        if (owner) set(UNSYNCED_KEY, owner);
+        return savePlatforms(token, patch).then(function (ok) {
+            if (ok && get(UNSYNCED_KEY) === owner) del(UNSYNCED_KEY);
+            return ok;
+        });
+    }
+    // True when this owner has an account write that never landed.
+    function needsSync() {
+        var o = currentOwner();
+        return !!o && get(UNSYNCED_KEY) === o;
+    }
     function saveServerHandle(token, handle) {
         handle = clean(handle);
         return handle ? savePlatforms(token, { sleeper: handle }) : Promise.resolve(false);
@@ -423,8 +441,8 @@
         return fetchServerPlatforms(token, opts.timeoutMs || 3000).then(function (r) {
             var patch = r.ok ? patchFor(r.platforms, handle) : (handle ? { sleeper: handle } : {});
             if (!r.ok && handle) { var uid = localSleeperUserId(); if (uid) patch.sleeperUserId = uid; }
-            if (!Object.keys(patch).length) return true;
-            return savePlatforms(token, patch);
+            if (!Object.keys(patch).length) { if (r.ok) del(UNSYNCED_KEY); return true; }
+            return saveTracked(token, patch);
         });
     }
     function settle(promise, ms) { return withTimeout(promise, ms || 4000, false); }
@@ -436,7 +454,9 @@
     // opts.isNew: the account was just created. opts.timeoutMs: server read.
     // Resolves (never rejects) to
     //   { owner, handle, source: 'server'|'local'|'offline'|'legacy'|'none',
-    //     onboarded, cleared, uploaded }
+    //     onboarded, cleared, uploaded, serverOk, restored, patch }
+    // serverOk:false = the account could not be read (offline, timeout, 5xx)
+    // — callers with no handle should offer a retry, not "connect a league".
     // Route on `onboarded` (a league source is bound), never on a stale
     // onboardingComplete another owner left behind.
     function reconcileAfterSignIn(session, opts) {
@@ -483,6 +503,7 @@
             : fetchServerPlatforms(token, opts.timeoutMs || 6000);
         return read.then(function (server) {
             var local = localHandle();
+            result.serverOk = !!server.ok;
             if (!server.ok) {
                 // Server unreachable: this owner's device copy stands in.
                 result.handle = local ? writeHandle(local) : null;
@@ -509,10 +530,10 @@
             // first run, or an adopted guest): upload it.
             var patch = patchFor(P, result.handle);
             result.onboarded = hasLeagueSource();
-            if (!Object.keys(patch).length) return result;
+            if (!Object.keys(patch).length) { del(UNSYNCED_KEY); return result; }
             result.uploaded = true;
             result.patch = patch;
-            return settle(savePlatforms(token, patch), 3000).then(function () { return result; });
+            return settle(saveTracked(token, patch), 3000).then(function () { return result; });
         }).catch(function () {
             result.handle = localHandle();
             result.onboarded = hasLeagueSource();
@@ -603,6 +624,7 @@
         savePlatforms: savePlatforms,
         saveServerHandle: saveServerHandle,
         pushIdentity: pushIdentity,
+        needsSync: needsSync,
         settle: settle,
         reconcileAfterSignIn: reconcileAfterSignIn,
         clearCredentials: clearCredentials,

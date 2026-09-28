@@ -133,9 +133,16 @@ function _clearDeadAppSession(reason) {
     // _guardCredentialOwner clears the secrets on that load.
     _supabase = null;
     _supabaseToken = null;
-    try {
-        window.dispatchEvent(new CustomEvent('dhq:session-expired', { detail: { reason, email } }));
-    } catch {}
+    _announceSessionExpired({ reason, email });
+}
+
+// Raise dhq:session-expired, and remember it on window.__dhqSessionExpired:
+// the shell's listener (core.js) can register after the first profile read
+// already failed (tier.js runs before the Babel-compiled app), so it checks
+// the marker when it attaches.
+function _announceSessionExpired(detail) {
+    try { window.__dhqSessionExpired = Object.assign({ at: Date.now() }, detail || {}); } catch {}
+    try { window.dispatchEvent(new CustomEvent('dhq:session-expired', { detail: detail || {} })); } catch {}
 }
 
 // Decoded JWT claims (base64url, UTF-8 safe); null when undecodable. Never
@@ -670,9 +677,7 @@ window.OD.callAI = async function({ type, context }) {
             // shell's "session ended" notice. Nothing is cleared here: a 401
             // can be a transient server read failure.
             const signedIn = !!token;
-            if (signedIn) {
-                try { window.dispatchEvent(new CustomEvent('dhq:session-expired', { detail: { reason: 'ai-401' } })); } catch {}
-            }
+            if (signedIn) _announceSessionExpired({ reason: 'ai-401' });
             const error = new Error(signedIn
                 ? 'Your session ended. Sign in again to keep using Alex.'
                 : 'Sign in to a free Dynasty HQ account to use Alex.');
