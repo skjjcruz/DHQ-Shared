@@ -111,6 +111,20 @@ function getAppSession() {
 // the next gate check. Apps that want to show a "session expired" notice
 // can listen for the event.
 function _clearDeadAppSession(reason) {
+    // Record whose identity cache this is before the token goes (identity.js;
+    // an unstamped device otherwise forgets and a re-sign-in can't match).
+    try {
+        const identity = window.OD && window.OD.identity;
+        if (identity && typeof identity.stampFromSession === 'function') identity.stampFromSession();
+        else if (!localStorage.getItem('dhq_identity_owner_v1')) {
+            const raw = JSON.parse(localStorage.getItem(FW_SESSION_KEY) || 'null');
+            const meta = (raw && _jwtClaims(raw.token) || {}).app_metadata || {};
+            const owner = meta.user_id ? 'account:' + meta.user_id
+                : (typeof meta.sleeper_username === 'string' && meta.sleeper_username ? 'legacy:' + meta.sleeper_username.toLowerCase()
+                : (raw && raw.user && raw.user.id ? 'account:' + raw.user.id : null));
+            if (owner) localStorage.setItem('dhq_identity_owner_v1', owner);
+        }
+    } catch {}
     let email = null;
     try {
         const raw = localStorage.getItem(FW_SESSION_KEY);

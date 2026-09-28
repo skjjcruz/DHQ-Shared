@@ -49,6 +49,15 @@
     // the server confirmed it. A write that failed or died with the page is
     // retried by the next boot's reconcile.
     var UNSYNCED_KEY = 'dhq_identity_unsynced_v1';
+    // An unstamped cache met by a fresh sign-in (no token left to say whose it
+    // was): set aside here for the user to confirm on the connect page —
+    // never used or uploaded unconfirmed. {owner, handle?, sleeperUserId?,
+    // espn?, mfl?, at}
+    var PENDING_KEY = 'dhq_identity_unconfirmed_v1';
+    // The Demo League's handle. The old Demo button persisted it into
+    // od_auth_v1; that residue is never adopted or uploaded unless the
+    // account's own server handle is this one.
+    var DEMO_HANDLE = 'bigloco';
     var DEFAULT_SUPABASE_URL = 'https://sxshiqyxhhifvtfqawbq.supabase.co';
     var DEFAULT_SUPABASE_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InN4c2hpcXl4aGhpZnZ0ZnFhd2JxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI3MTExMzAsImV4cCI6MjA4ODI4NzEzMH0.zJi9W986ZLaANiZN6pt6ReFwaQU6yPeidsERIWo2ibI';
 
@@ -62,7 +71,7 @@
         'od_display_name', 'od_avatar_emoji', 'dhq_owner_club_v1',
         'mfl_league_id', 'mfl_year', 'mfl_franchise_id',
         'espn_league_id', 'espn_year', 'espn_team_id',
-        GUEST_KEY, UNSYNCED_KEY,
+        GUEST_KEY, UNSYNCED_KEY, PENDING_KEY,
     ];
     // Per-league connector records (league pointers + team; secrets are
     // stripped by the connectors) and the owner's own per-league work — tags,
@@ -220,6 +229,73 @@
         if (!stamp) return true;
         return stamp === currentOwner();
     }
+    function isDemo(h) { return same(h, DEMO_HANDLE); }
+    // Before a token is thrown away (expiry, revocation, sign-out): record
+    // whose cache this is, so the same owner signing back in finds it —
+    // a device from before stamping otherwise loses that knowledge with the
+    // token. Never overwrites an existing stamp.
+    function stampFromSession(session) {
+        if (getStamp()) return getStamp();
+        var s = session;
+        if (!s) {
+            s = currentSession();
+            if (!s) { var legacy = readJSON(LEGACY_SESSION_KEY); if (legacy && legacy.token) s = legacy; }
+        }
+        var owner = sessionOwner(s);
+        if (owner) setStamp(owner);
+        return owner;
+    }
+    // Stamp, then drop fw_session_v1 (the session-ended notice's "Sign in").
+    function discardSession() {
+        stampFromSession();
+        del(FW_SESSION_KEY);
+    }
+    // The drop-in residue of the old Demo button (od_auth_v1 / profile holding
+    // the demo handle): removed.
+    function dropDemoResidue() {
+        var a = readJSON(AUTH_KEY);
+        if (a && isDemo(handleOf(a))) del(AUTH_KEY);
+        var p = readJSON(PROFILE_KEY);
+        if (p && isDemo(p.sleeperUsername)) { delete p.sleeperUsername; delete p.sleeperUserId; set(PROFILE_KEY, JSON.stringify(p)); }
+        if (isDemo(get(LOCKED_KEY))) del(LOCKED_KEY);
+    }
+    // What an unstamped cache holds, for the confirm step (null when nothing).
+    function snapshotCache() {
+        var h = localHandle();
+        if (isDemo(h)) h = null;
+        var lp = localPointers();
+        if (!h && !lp.espn && !lp.mfl) return null;
+        return { handle: h || null, sleeperUserId: h ? localSleeperUserId() : null, espn: lp.espn || null, mfl: lp.mfl || null };
+    }
+    // The pending confirm for the current session's owner, or null.
+    function pendingConfirm() {
+        var p = readJSON(PENDING_KEY);
+        if (!p || typeof p !== 'object') return null;
+        var o = sessionOwner(currentSession());
+        return o && p.owner === o ? p : null;
+    }
+    function dropPending() { del(PENDING_KEY); }
+    // "Yes, that's me": the confirmed handle / league pointers go back into
+    // the device cache (only where the device has none) and onto the account.
+    function confirmPending() {
+        var p = pendingConfirm();
+        if (!p) return Promise.resolve(false);
+        if (p.handle) writeHandle(p.handle, p.sleeperUserId ? { sleeperUserId: p.sleeperUserId } : null);
+        if (p.espn && !get('espn_league_id')) {
+            set('espn_league_id', p.espn.leagueId); set('espn_year', String(p.espn.year));
+            if (p.espn.teamId) set('espn_team_id', p.espn.teamId);
+        }
+        if (p.mfl && !get('mfl_league_id')) {
+            set('mfl_league_id', p.mfl.leagueId); set('mfl_year', String(p.mfl.year));
+            if (p.mfl.franchiseId) set('mfl_franchise_id', p.mfl.franchiseId);
+        }
+        var prof = readJSON(PROFILE_KEY) || {};
+        prof.onboardingComplete = true;
+        set(PROFILE_KEY, JSON.stringify(prof));
+        del(PENDING_KEY);
+        return pushIdentity();
+    }
+
     // A usable app-account token (not legacy, not expired) or null.
     function accountToken(session) {
         var s = session || currentSession();
@@ -249,7 +325,9 @@
     // cleared first, so a guest never inherits an account's leagues.
     function beginGuest() {
         var stamp = getStamp();
-        if (stamp && stamp !== 'guest') clearDeviceIdentity();
+        // Someone else's cache: an account/legacy stamp, or an unstamped cache
+        // with no guest flag (a signed-out user of an older build).
+        if ((stamp && stamp !== 'guest') || (!stamp && get(GUEST_KEY) !== '1')) clearDeviceIdentity();
         setStamp('guest');
         set(GUEST_KEY, '1');
     }
@@ -377,6 +455,7 @@
         P = P || { sleeper: null, espn: [], mfl: [] };
         var patch = {};
         handle = clean(handle);
+        if (isDemo(handle) && !isDemo(P.sleeper)) handle = null; // never upload Demo residue
         if (handle && !same(P.sleeper, handle)) {
             patch.sleeper = handle;
             var uid = localSleeperUserId();
@@ -457,6 +536,7 @@
         var token = accountToken();
         if (!token) return Promise.resolve(false);
         var handle = localHandle();
+        if (isDemo(handle)) handle = null;
         return busy(fetchServerPlatforms(token, opts.timeoutMs || 3000).then(function (r) {
             var patch = r.ok ? patchFor(r.platforms, handle) : (handle ? { sleeper: handle } : {});
             if (!r.ok && handle) { var uid = localSleeperUserId(); if (uid) patch.sleeperUserId = uid; }
@@ -498,18 +578,28 @@
         var credOwner = null;
         try { credOwner = (ss() && ss().getItem(CREDENTIAL_OWNER_KEY)) || null; } catch (e) {}
         if (credOwner && !/^(account|legacy):/.test(credOwner)) credOwner = null;
-        // An UNSTAMPED cache (a device from before owner stamping) is trusted
-        // only at boot with a session this device already held (opts.boot:
-        // the user was signed in when this build first ran). On a fresh
-        // sign-in it is treated as someone else's: cleared, never uploaded —
-        // the server handle (if any) decides, else the connect page.
+        var otherTab = !!(credOwner && credOwner !== owner);
+        // This owner's own account write never landed (hub connect offline, a
+        // 5xx): the device's handle is newer than the server's.
+        var unsynced = get(UNSYNCED_KEY) === owner;
+        // An UNSTAMPED cache is trusted only at boot with a session this device
+        // already held (the user was signed in when this build first ran).
+        var liveBoot = !!opts.boot && !prior && !otherTab;
+        // On a fresh sign-in an unstamped cache (no token left to say whose it
+        // was — tokens are stamped before they are discarded now) is set
+        // aside for the user to confirm on the connect page, never used or
+        // uploaded unconfirmed.
         var mine;
         if (prior === owner) mine = true;
         else if (fromGuest) mine = true;                          // a guest (flag set now) adopting their leagues
-        else if (!prior) mine = !!opts.boot && !(credOwner && credOwner !== owner);
+        else if (!prior) mine = liveBoot;
         else mine = false;                                        // someone else's cache
         if (opts.isNew && !fromGuest) mine = false;               // a new account starts clean
-        if (!mine) { clearDeviceIdentity(); result.cleared = true; }
+        var unconfirmed = null;
+        if (!mine) {
+            if (!prior && !opts.isNew && !otherTab) unconfirmed = snapshotCache();
+            clearDeviceIdentity(); result.cleared = true;
+        }
         del(GUEST_KEY);
         setStamp(owner);
 
@@ -517,6 +607,12 @@
             var lh = legacyHandleOf(s);
             result.handle = writeHandle(lh);
             result.source = 'legacy';
+            // The handle is the credential; unconfirmed league pointers still
+            // wait for a tap on the connect page.
+            if (unconfirmed && (unconfirmed.espn || unconfirmed.mfl)) {
+                set(PENDING_KEY, JSON.stringify({ owner: owner, espn: unconfirmed.espn, mfl: unconfirmed.mfl, at: Date.now() }));
+                result.needsConfirm = true;
+            }
             result.onboarded = hasLeagueSource();
             return Promise.resolve(result);
         }
@@ -534,16 +630,37 @@
             var local = localHandle();
             result.serverOk = !!server.ok;
             if (!server.ok) {
-                // Server unreachable: this owner's device copy stands in.
-                result.handle = local ? writeHandle(local) : null;
-                result.source = local ? 'offline' : 'none';
+                // Server unreachable: this owner's device copy stands in (the
+                // Demo residue never does); an unconfirmed cache waits for a tap.
+                if (unconfirmed) {
+                    set(PENDING_KEY, JSON.stringify(Object.assign({ owner: owner, at: Date.now() }, unconfirmed)));
+                    result.needsConfirm = true;
+                }
+                result.handle = local && !isDemo(local) ? writeHandle(local) : null;
+                result.source = result.handle ? 'offline' : 'none';
                 result.onboarded = hasLeagueSource();
                 return result;
             }
             var P = server.platforms || normalizePlatforms({});
-            if (P.sleeper) {
-                // Server wins. A guest's own handle that disagrees with the
-                // account they signed in to was the guest's, not the account's.
+            // Demo residue: dropped unless the account's own handle is it.
+            if (local && isDemo(local) && !isDemo(P.sleeper)) { dropDemoResidue(); local = localHandle(); if (isDemo(local)) local = null; }
+            // Boot migration only: Scout's handle (same origin in the native
+            // app) is adopted once when nothing else names this account.
+            if (!local && liveBoot && !P.sleeper) {
+                var scout = clean(get('dynastyhq_username'));
+                if (scout && !isDemo(scout)) local = scout;
+            }
+            // The device's handle is newer than the server's only when this
+            // owner's write never landed, or on the first boot of an unstamped
+            // cache with a live session. Otherwise the server wins (and the
+            // backfill is never fought).
+            var localWins = !!local && (unsynced || liveBoot) && !same(local, P.sleeper);
+            if (localWins) {
+                result.handle = writeHandle(local);
+                result.source = 'local';
+            } else if (P.sleeper) {
+                // A guest's own handle that disagrees with the account they
+                // signed in to was the guest's, not the account's.
                 if (fromGuest && !opts.isNew && local && !same(local, P.sleeper)) {
                     clearDeviceIdentity(); result.cleared = true;
                     setStamp(owner);
@@ -555,8 +672,16 @@
                 result.source = 'local';
             }
             result.restored = restorePointers(P);
+            // The unconfirmed cache: offer what the account doesn't have.
+            if (unconfirmed) {
+                var offer = { owner: owner, at: Date.now() };
+                if (unconfirmed.handle && !P.sleeper) { offer.handle = unconfirmed.handle; offer.sleeperUserId = unconfirmed.sleeperUserId; }
+                if (unconfirmed.espn && !P.espn.length) offer.espn = unconfirmed.espn;
+                if (unconfirmed.mfl && !P.mfl.length) offer.mfl = unconfirmed.mfl;
+                if (offer.handle || offer.espn || offer.mfl) { set(PENDING_KEY, JSON.stringify(offer)); result.needsConfirm = true; }
+            }
             // What only this device knows (it is this owner's — same stamp,
-            // first run, or an adopted guest): upload it.
+            // first boot, or an adopted guest): upload it.
             var patch = patchFor(P, result.handle);
             result.onboarded = hasLeagueSource();
             if (!Object.keys(patch).length) { del(UNSYNCED_KEY); return result; }
@@ -584,6 +709,7 @@
     }
     function clearCredentials(opts) {
         var keepSupabase = !!(opts && opts.keepSupabase);
+        stampFromSession(); // whose cache this is outlives the token
         [ls(), ss()].filter(Boolean).forEach(function (store) {
             CREDENTIAL_KEYS.concat(DEVICE_SECRET_KEYS).concat(keepSupabase ? [] : supabaseAuthKeys(store)).forEach(function (k) {
                 try { store.removeItem(k); } catch (e) {}
@@ -607,6 +733,10 @@
     // when the bridge exposes logOut (native app only). Guarded, capped.
     function revenueCatLogOut() {
         try {
+            // The app's billing module first (it knows the Capacitor plugin and
+            // the Swift shell bridge), then the plugin directly.
+            var B = root.DHQBilling;
+            if (B && typeof B.logOut === 'function') return settle(Promise.resolve().then(function () { return B.logOut(); }), 1500);
             var P = (root.Capacitor && root.Capacitor.Plugins && root.Capacitor.Plugins.Purchases) || root.Purchases || null;
             if (P && typeof P.logOut === 'function') return settle(Promise.resolve().then(function () { return P.logOut(); }), 1500);
         } catch (e) {}
@@ -657,6 +787,13 @@
         saveServerHandle: saveServerHandle,
         pushIdentity: pushIdentity,
         needsSync: needsSync,
+        DEMO_HANDLE: DEMO_HANDLE,
+        isDemo: isDemo,
+        stampFromSession: stampFromSession,
+        discardSession: discardSession,
+        pendingConfirm: pendingConfirm,
+        confirmPending: confirmPending,
+        dropPending: dropPending,
         busy: busy,
         settle: settle,
         reconcileAfterSignIn: reconcileAfterSignIn,
