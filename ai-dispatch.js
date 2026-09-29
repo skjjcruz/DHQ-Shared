@@ -110,6 +110,9 @@ const AI_ROUTES = {
   // tier so a busy draft lives on the roomiest free lanes — mirrors the
   // server's ai-analyze route table, which is the real authority.
   'pick-analysis': 'fast',
+  // Lineup game-day note: the server's fast lane (ai-analyze). Listed here so
+  // alex_prompt_sent telemetry names the real tier instead of the default.
+  'start-sit': 'fast',
   'player-scout': 'premium',
   'deep-analysis': 'deep',
   'league-report': 'deep',
@@ -242,7 +245,11 @@ function dhqServerEnrichmentFields(){
 // ── Core AI call ──────────────────────────────────────────────
 // Priority: 1) Server-side via OD.callAI (no user key needed)
 //           2) Client-side via user's API key (existing behavior)
-async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, callType=null){
+// callOpts (optional): { onDelta(chunk, soFar) — stream the server answer as
+// it is written; system — replace the default identity prompt; lean — send
+// only what the server reads (no duplicate userMessage, no enrichment
+// fields). Old callers pass nothing and behave exactly as before.
+async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, callType=null, callOpts=null){
   // Smart model routing: if callType is set AND user has the required API key, route to optimal model
   // If user has manually set a provider/model in settings, respect that (user override)
   const S = window.S || window.App?.S || {};
@@ -288,7 +295,7 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
     routeTier = routeTier === 'deep' ? 'deep' : 'premium';
   }
 
-  const sys = (typeof DHQ_IDENTITY !== 'undefined') ? DHQ_IDENTITY : 'Dynasty FF advisor. Values from DHQ (0-10000 scale, league-derived). Be specific with player names and DHQ values. NEVER recommend players with DHQ < 500 or under 5.0 PPG (6+ games); if no quality targets exist, say "HOLD YOUR FAAB" rather than inventing one. Sleeper-ready messages when asked.';
+  const sys = (callOpts && callOpts.system) ? callOpts.system : (typeof DHQ_IDENTITY !== 'undefined') ? DHQ_IDENTITY : 'Dynasty FF advisor. Values from DHQ (0-10000 scale, league-derived). Be specific with player names and DHQ values. NEVER recommend players with DHQ < 500 or under 5.0 PPG (6+ games); if no quality targets exist, say "HOLD YOUR FAAB" rather than inventing one. Sleeper-ready messages when asked.';
   const analyticsType = callType || 'recon-chat';
   const aiStartedAt = Date.now();
   trackAIEvent('alex_prompt_sent', {
@@ -319,9 +326,12 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
       // Build a single context string from the messages array
       const lastUserMsg = [...messages].reverse().find(m=>m.role==='user');
       const effectiveType = callType || 'recon-chat';
-      const result = await window.OD.callAI({
-        type: effectiveType,
-        context: JSON.stringify({
+      const lean = !!(callOpts && callOpts.lean);
+      const payload = lean
+        // The server reads messages (userMessage only when messages is
+        // empty) — the full shape sent the prompt twice.
+        ? { system: sys, messages: messages, callType: effectiveType, maxTokens: maxTok, useWebSearch: useWebSearch }
+        : {
           system: sys,
           messages: messages,
           callType: effectiveType,
@@ -333,8 +343,11 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
           // team-mode / quality blocks the structured path gets. Older servers
           // ignore unknown fields, so this is safe to send unconditionally.
           ...dhqServerEnrichmentFields(),
-        }),
-      });
+        };
+      const onDelta = callOpts && typeof callOpts.onDelta === 'function' ? callOpts.onDelta : null;
+      const result = (onDelta && !useWebSearch && typeof window.OD.callAIStream === 'function')
+        ? await window.OD.callAIStream({ type: effectiveType, context: JSON.stringify(payload), onDelta })
+        : await window.OD.callAI({ type: effectiveType, context: JSON.stringify(payload) });
       const reply = result?.analysis || result?.response || result?.text ||
         (typeof result === 'string' ? result : JSON.stringify(result));
       // Expose usage for UI (rate limit indicator)

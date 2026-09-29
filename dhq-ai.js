@@ -335,10 +335,18 @@ Be specific about players and decisions discussed.`,
   // computed deterministically by the start/sit engine and passed in — the model
   // only narrates them, never invents numbers. Falls back to a seeded template
   // client-side when AI is unavailable, so this is purely an upgrade.
+  //
+  // LEAN (2026-09-29): this note is on the server's fast lane, and the whole
+  // DHQ identity (~1.5k tokens, sent twice: as system AND as a [System:]
+  // prefix) made it the slowest two sentences in the app. A lean call sends a
+  // short voice line once, only the week's facts, and no thinking headroom.
   'start-sit': {
-    system: DHQ_IDENTITY,
-    instructions: `Context is a JSON object with this week's facts {week, winPct, margin, opponent, pointsLeftOnBench, topUpgrade, topUpgradeSlot, injuries[], objective, mode}. Write ONE to TWO punchy sentences of game-day coaching for the GM: whether they're favored (use winPct/opponent), the single most valuable start/sit move if pointsLeftOnBench is meaningful (name topUpgrade and its slot), and any injuries to monitor. Use ONLY the numbers provided — never invent points, ranks, or news. Confident, human, conversational. Plain prose only: no markdown, lists, headers, or sign-off.`,
-    maxTokens: 160,
+    lean: true,
+    system: 'You are Alex, the Dynasty HQ GM assistant: a sharp, confident, human fantasy football coach talking to the owner on game day. Use ONLY the facts you are given — never invent players, points, odds, injuries or news.',
+    instructions: `Context is a JSON object with this week's facts, exactly as the Lineup screen shows them: {week, projections, winPct, margin, opponent, pointsLeftOnBench, lineupOptimal, swaps[{slot, out, in, gain}], injuries[], byeWatch[{week, count, unfilled, reason, positions}], mode}. Write ONE to TWO punchy sentences of game-day coaching: whether they're favored (winPct vs opponent), the most valuable swap if swaps is non-empty (name who comes in, who sits, and the slot — only a swap listed in swaps; if swaps is empty the lineup is already optimal), and any injury to watch or a coming bye-week hole. Numbers exactly as given. Plain prose only: no markdown, lists, headers, or sign-off.`,
+    // Room for a short answer plus the fast model's brief reasoning pass;
+    // the server's fast lane caps it again.
+    maxTokens: 400,
   },
 };
 
@@ -899,7 +907,10 @@ async function dhqAI(type, message, context, options) {
   // ignore the extra room and every model stops when the answer is done, so it
   // never pads a reply — it only stops the thinking pass from eating it.
   const THINKING_HEADROOM = 4000;
-  const maxTokens = (config.maxTokens || 500) + THINKING_HEADROOM;
+  // Lean types ride the server's fast lane, which keeps thinking minimal and
+  // caps output itself: no headroom, so a two-sentence note stays two.
+  const lean = !!config.lean;
+  const maxTokens = (config.maxTokens || 500) + (lean ? 0 : THINKING_HEADROOM);
   const useWebSearch = config.useWebSearch || false;
 
   // Improvement D: Inject real-time news for applicable types
@@ -954,8 +965,9 @@ async function dhqAI(type, message, context, options) {
   const callClaude = window.callClaude || window.App?.callClaude;
   if (typeof callClaude !== 'function') throw new Error('No AI engine available');
 
-  // We prepend system to the first user message
-  const systemPrefixed = messages.map((m, i) => {
+  // We prepend system to the first user message (the server also receives it
+  // as the system prompt — lean types skip the duplicate).
+  const systemPrefixed = lean ? messages : messages.map((m, i) => {
     if (i === 0 && m.role === 'user') {
       return { role: 'user', content: '[System: ' + system + ']\n\n' + m.content };
     }
@@ -970,7 +982,9 @@ async function dhqAI(type, message, context, options) {
   // dynasty_read is intrinsically a web-search feature (player news synthesis), so
   // it always searches on the BYO-key path — the user is spending their own tokens
   // and a newsless read defeats the feature. Other types stay tier-gated.
-  const finalWebSearch = (type === 'dynasty_read') ? true : (canUseWebSearch && (useWebSearch || realTimeIntent));
+  // Lean (fast-lane) notes narrate facts already on screen: never a search —
+  // their instructions mention "injuries", which tripped realTimeIntent.
+  const finalWebSearch = lean ? false : (type === 'dynasty_read') ? true : (canUseWebSearch && (useWebSearch || realTimeIntent));
 
   // Per-pick draft stream reactions are low-stakes and high-frequency. The client
   // (BYOK) transport retries 429/529 up to twice with a 10s backoff — which under the
@@ -979,7 +993,12 @@ async function dhqAI(type, message, context, options) {
   // retry so each pick fires exactly one LLM call; the rule-based pick line already
   // populated the stream, so a dropped reaction degrades gracefully.
   const retries = (type === 'pick-analysis') ? 0 : 2;
-  const reply = await callClaude(systemPrefixed, finalWebSearch, retries, maxTokens, type);
+  // options.onDelta(chunk, soFar): stream the answer as it is written (server
+  // path only; a server or BYO path that can't stream just returns at the end).
+  const callOpts = (lean || typeof options?.onDelta === 'function')
+    ? { lean, system: lean ? system : undefined, onDelta: typeof options?.onDelta === 'function' ? options.onDelta : undefined }
+    : undefined;
+  const reply = await callClaude(systemPrefixed, finalWebSearch, retries, maxTokens, type, callOpts);
 
   // Validate response — fast, non-blocking, appends notes if issues found
   const validated = validateAIResponse(type, reply, {

@@ -651,7 +651,7 @@ window.OD.acquireSessionToken = async function(username, password) {
 // free chat, so its cost is bounded by the chat quota.
 const FREE_AI_TYPE_ALLOWLIST = ['recon-chat', 'home-chat', 'rookie-scout', 'trade-scout', 'draft-chat', 'memory-summary'];
 
-window.OD.callAI = async function({ type, context }) {
+function _aiFreeTierGuard(type) {
     if (typeof window.isScoutPro === 'function' && !window.isScoutPro()
         && !FREE_AI_TYPE_ALLOWLIST.includes(type || 'recon-chat')) {
         console.warn('[FW] free-tier AI call blocked:', type);
@@ -660,55 +660,181 @@ window.OD.callAI = async function({ type, context }) {
         error.blockedFreeTier = true;
         throw error;
     }
-    const token = getSessionToken();
-    let aiContext = context;
-    if (typeof context === 'string') {
-        try {
-            JSON.parse(context);
-        } catch {
-            aiContext = JSON.stringify({
-                callType: type || 'recon-chat',
-                userMessage: context,
-                messages: [{ role: 'user', content: context }],
-            });
-        }
+}
+
+function _aiContextPayload(type, context) {
+    if (typeof context !== 'string') return context;
+    try {
+        JSON.parse(context);
+        return context;
+    } catch {
+        return JSON.stringify({
+            callType: type || 'recon-chat',
+            userMessage: context,
+            messages: [{ role: 'user', content: context }],
+        });
     }
-    const response = await _odFetchWithTimeout(BACKEND_ENDPOINTS.aiAnalyze, {
+}
+
+function _aiPost(token, body, extraHeaders) {
+    return _odFetchWithTimeout(BACKEND_ENDPOINTS.aiAnalyze, {
         method: 'POST',
-        headers: {
+        headers: Object.assign({
             'Content-Type': 'application/json',
             'Authorization': `Bearer ${token || SUPABASE_ANON}`,
             'apikey': SUPABASE_ANON,
-        },
-        body: JSON.stringify({ type, context: aiContext }),
+        }, extraHeaders || {}),
+        body: JSON.stringify(body),
     });
-    if (!response.ok) {
-        const err = await response.json().catch(() => ({}));
-        if (response.status === 401) {
-            // "Valid session token required." — the stored session was revoked
-            // (password change elsewhere), the account is gone, or this is a
-            // guest. Say it in plain words; a signed-in user also gets the
-            // shell's "session ended" notice. Nothing is cleared here: a 401
-            // can be a transient server read failure.
-            const signedIn = !!token;
-            if (signedIn) _announceSessionExpired({ reason: 'ai-401' });
-            const error = new Error(signedIn
-                ? 'Your session ended. Sign in again to keep using Alex.'
-                : 'Sign in to a free Dynasty HQ account to use Alex.');
-            error.status = 401;
-            error.sessionExpired = signedIn;
-            error.serverMessage = err.error || null;
-            throw error;
+}
+
+// ── Server-Sent Events parser (ai-analyze streaming) ──────────────
+// push() the decoded text as it arrives; get back each complete event
+// {event, data}. Partial lines wait for the next chunk. Handles \n, \r\n and
+// \r endings, multi-line data, comments and named events. Mirrors the
+// edge function's parser (supabase/functions/_shared/ai-fast.ts).
+function _odCreateSSEParser() {
+    let buffer = '';
+    let dataLines = [];
+    let eventName = '';
+    function dispatch(out) {
+        if (dataLines.length) out.push({ event: eventName || 'message', data: dataLines.join('\n') });
+        dataLines = [];
+        eventName = '';
+    }
+    function processLine(line, out) {
+        if (line === '') { dispatch(out); return; }
+        if (line.charAt(0) === ':') return;
+        const colon = line.indexOf(':');
+        const field = colon < 0 ? line : line.slice(0, colon);
+        let value = colon < 0 ? '' : line.slice(colon + 1);
+        if (value.charAt(0) === ' ') value = value.slice(1);
+        if (field === 'data') dataLines.push(value);
+        else if (field === 'event') eventName = value;
+    }
+    return {
+        push(chunk) {
+            const out = [];
+            buffer += chunk;
+            let text = buffer;
+            let carry = '';
+            if (text.endsWith('\r')) { carry = '\r'; text = text.slice(0, -1); }
+            text = text.replace(/\r\n?/g, '\n');
+            const parts = text.split('\n');
+            buffer = parts.pop() + carry;
+            parts.forEach(line => processLine(line, out));
+            return out;
+        },
+        flush() {
+            const out = [];
+            if (buffer) { processLine(buffer.replace(/\r$/, ''), out); buffer = ''; }
+            dispatch(out);
+            return out;
+        },
+    };
+}
+
+// Streaming variant of callAI. Asks ai-analyze for an SSE answer
+// (stream:true) and calls onDelta(textChunk, textSoFar) as Alex writes;
+// resolves to the same object callAI returns ({ analysis, provider, model,
+// usage, ... }). A server that answers with plain JSON — the live one until
+// the streaming edge function ships, a cache hit, or any error — is handled
+// exactly like callAI, so this is safe to call against every server version.
+window.OD.callAIStream = async function({ type, context, onDelta, onMeta }) {
+    _aiFreeTierGuard(type);
+    const token = getSessionToken();
+    const response = await _aiPost(token, { type, context: _aiContextPayload(type, context), stream: true },
+        { 'Accept': 'text/event-stream, application/json' });
+    if (!response.ok) throw await _aiResponseError(response, token);
+    const contentType = String((response.headers && response.headers.get && response.headers.get('Content-Type')) || '');
+    const reader = /event-stream/i.test(contentType) && response.body && typeof response.body.getReader === 'function'
+        ? response.body.getReader()
+        : null;
+    if (!reader) return response.json();
+
+    const decoder = new TextDecoder();
+    const parser = _odCreateSSEParser();
+    let text = '';
+    let final = null;
+    let failure = null;
+    const handle = (events) => {
+        events.forEach(ev => {
+            let data = null;
+            try { data = JSON.parse(ev.data); } catch { return; }
+            if (ev.event === 'delta' && data && typeof data.text === 'string') {
+                text += data.text;
+                if (typeof onDelta === 'function') { try { onDelta(data.text, text); } catch (e) { /* UI hook */ } }
+            } else if (ev.event === 'meta') {
+                if (typeof onMeta === 'function') { try { onMeta(data); } catch (e) { /* UI hook */ } }
+            } else if (ev.event === 'done') {
+                final = data;
+            } else if (ev.event === 'error') {
+                failure = data || {};
+            }
+        });
+    };
+    try {
+        for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            handle(parser.push(decoder.decode(value, { stream: true })));
+            if (final || failure) break;
         }
-        const error = new Error(err.error || `AI call failed (${response.status})`);
-        error.status = response.status;
-        if (err.usage) error.usage = err.usage;
-        if (err.limit) error.limit = err.limit;
-        if (err.used) error.used = err.used;
+        handle(parser.push(decoder.decode()));
+        handle(parser.flush());
+    } catch (e) {
+        // Connection dropped mid-answer: keep what already arrived.
+        if (!text) throw e;
+        return { analysis: text, partial: true };
+    } finally {
+        try { reader.cancel && reader.cancel().catch(() => {}); } catch (e) { /* closed */ }
+    }
+    if (final) return Object.assign({}, final, { analysis: typeof final.analysis === 'string' ? final.analysis : text });
+    if (failure) {
+        const error = new Error(failure.error || 'AI call failed');
+        error.status = failure.status || 500;
+        if (text) error.partialText = text;
         throw error;
     }
+    if (text) return { analysis: text, partial: true };
+    throw new Error('AI call failed (empty stream)');
+};
+window.OD._createSSEParser = _odCreateSSEParser;
+
+window.OD.callAI = async function({ type, context }) {
+    _aiFreeTierGuard(type);
+    const token = getSessionToken();
+    const response = await _aiPost(token, { type, context: _aiContextPayload(type, context) });
+    if (!response.ok) throw await _aiResponseError(response, token);
     return response.json();
 };
+
+// The error callAI / callAIStream throw for a non-2xx answer.
+async function _aiResponseError(response, token) {
+    const err = await response.json().catch(() => ({}));
+    if (response.status === 401) {
+        // "Valid session token required." — the stored session was revoked
+        // (password change elsewhere), the account is gone, or this is a
+        // guest. Say it in plain words; a signed-in user also gets the
+        // shell's "session ended" notice. Nothing is cleared here: a 401
+        // can be a transient server read failure.
+        const signedIn = !!token;
+        if (signedIn) _announceSessionExpired({ reason: 'ai-401' });
+        const error = new Error(signedIn
+            ? 'Your session ended. Sign in again to keep using Alex.'
+            : 'Sign in to a free Dynasty HQ account to use Alex.');
+        error.status = 401;
+        error.sessionExpired = signedIn;
+        error.serverMessage = err.error || null;
+        return error;
+    }
+    const error = new Error(err.error || `AI call failed (${response.status})`);
+    error.status = response.status;
+    if (err.usage) error.usage = err.usage;
+    if (err.limit) error.limit = err.limit;
+    if (err.used) error.used = err.used;
+    return error;
+}
 
 window.OD.saveAIAnalysis = async function(leagueId, type, contextSummary, analysis) {
     const owner = getOwnerIdentity();
