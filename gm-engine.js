@@ -126,6 +126,13 @@
     return targetNote + healthNote;
   }
 
+  // "Contender, #7 of 16" — the league-relative tier and its rank.
+  function _tierPhrase(a) {
+    const t = String(a?.tier || '');
+    const label = t ? t.charAt(0) + t.slice(1).toLowerCase() : 'Unranked';
+    return a?.tierRank && a?.tierOf ? `${label}, #${a.tierRank} of ${a.tierOf} in your league` : label;
+  }
+
   function _phaseAwareFallbackMove(topNeed, myAssess, strategy) {
     const cal = _calendarContext();
     const bestWaiver = _bestAvailableAtPos(topNeed);
@@ -135,7 +142,7 @@
     const bestWaiverText = bestWaiver
       ? ` Best available ${topNeed} is ${bestWaiver.name} at ${bestWaiver.dhq.toLocaleString()} DHQ, below the ${waiverFloor.toLocaleString()} DHQ action floor.`
       : ` No usable ${topNeed} waiver target is visible.`;
-    const healthText = myAssess?.healthScore ? ` Health ${Math.round(myAssess.healthScore)}.` : '';
+    const healthText = myAssess?.healthScore ? ` Roster Health ${Math.round(myAssess.healthScore)}.` : '';
     const strategyText = _strategyContextText(strategy, topNeed);
     const milestoneText = cal.nextMilestone
       ? ` ${cal.nextMilestone}${cal.weeksToNext != null ? ` in ${cal.weeksToNext}w` : ''}.`
@@ -305,16 +312,18 @@
 
     if (!topNeed) {
       // No pressing need — check if hold is appropriate
-      if (myAssess.healthScore >= 80) {
+      // Tier, not a raw Health cut: Health saturates (most teams sit
+      // 90+), the league-relative tier says where you actually stand.
+      if (myAssess.tier === 'ELITE' || myAssess.tier === 'CONTENDER') {
         return {
           type: 'hold',
-          action: 'Hold your core — roster health is elite',
+          action: myAssess.tier === 'ELITE' ? 'Hold your core — you are a top-tier team' : 'Hold your core — you are in the contender tier',
           targetPlayer: null,
           targetOwner: null,
           confidence: 'high',
           urgency: 'no_rush',
           alignment: strategy.mode === 'win_now' ? { alignment: 'aligned' } : { alignment: 'partial' },
-          reasoning: `Health score ${myAssess.healthScore} puts you in championship-caliber territory. Protect depth over the next 2 weeks.`,
+          reasoning: `${_tierPhrase(myAssess)}${myAssess.tier === 'ELITE' ? ' — championship-caliber' : ''} (Roster Health ${myAssess.healthScore}). Protect depth over the next 2 weeks.`,
         };
       }
       return _defaultNextMove();
@@ -653,17 +662,17 @@
       }
 
       // Priority 3: Health-based or urgency catch-all
-      if (hs < 65 && hs > 0) {
+      if (assess.tier === 'REBUILDING' && hs > 0) {
         priorities.push({
-          problem: 'Overall roster health is below contender threshold',
+          problem: 'Your team ranks in the league\'s rebuilding tier',
           consequence: ('Competing teams are pulling ahead every week you wait.'),
           actionLabel: _modeLabelMap('Full Rebuild', stratMode),
           actionType: 'trade',
         });
-      } else if (hs >= 80) {
+      } else if (assess.tier === 'ELITE' || assess.tier === 'CONTENDER') {
         priorities.push({
           problem: 'Protect your franchise players from trade pressure',
-          consequence: ('Elite rosters get picked apart if you\'re not careful about what you trade.'),
+          consequence: ('Top rosters get picked apart if you\'re not careful about what you trade.'),
           actionLabel: 'Set Untouchables',
           actionType: 'hold',
         });
@@ -822,10 +831,10 @@
           ? `Your ${pos} room is costing ~1 win/season. Fix it before the deadline.`
           : `${pos} is your most exploitable gap — opponents will target your lineup.`;
       }
-    } else if (hs < 60) {
-      line1 = 'Roster is below contender threshold — overall health limits your ceiling.';
+    } else if (assess.tier === 'REBUILDING') {
+      line1 = `${_tierPhrase(assess)} — results and roster health both trail the league.`;
     } else {
-      line1 = `Health score ${hs} — roster is competitive across the board.`;
+      line1 = `${_tierPhrase(assess)} (Roster Health ${hs}) — no critical position gaps.`;
     }
 
     // Line 2: biggest opportunity/asset
@@ -837,8 +846,10 @@
       } else {
         line2 = `${pos} is your biggest tradeable asset — use it to accelerate your rebuild.`;
       }
-    } else if (hs >= 80) {
+    } else if (assess.tier === 'ELITE') {
       line2 = 'Championship-caliber roster — protect your core and target depth upgrades.';
+    } else if (assess.tier === 'CONTENDER') {
+      line2 = 'Contender roster — protect your core and target depth upgrades.';
     } else {
       const S = _S();
       const allTP = S.tradedPicks || [];

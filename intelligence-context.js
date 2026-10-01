@@ -1115,7 +1115,7 @@
       const contender = /elite|contend|prime/i.test(`${assessment.tier || ''} ${assessment.window || ''}`);
       reasons.push(normalizeReason({
         code: contender ? 'contender_fit' : 'rebuilder_fit',
-        detail: `${teamName} profiles as ${assessment.tier || assessment.window}; recommendations should respect that window.`,
+        detail: `${teamName} profiles as ${assessment.tier || assessment.window}${assessment.tierRank && assessment.tierOf ? ` (#${assessment.tierRank} of ${assessment.tierOf} in the league on Roster Health + standings)` : ''}; recommendations should respect that window.`,
         weight: 0.8,
       }));
     }
@@ -1143,6 +1143,8 @@
         ownerName,
         teamName,
         tier: assessment.tier || '',
+        tierRank: assessment.tierRank || null,
+        tierOf: assessment.tierOf || null,
         window: assessment.window || '',
       },
       leagueProfile: profile,

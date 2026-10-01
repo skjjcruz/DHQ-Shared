@@ -229,6 +229,8 @@ function dhqServerEnrichmentFields(){
     const out = {};
     if (league?.roster_positions) out.rosterPositions = league.roster_positions;
     if (league?.scoring_settings) out.scoringSettings = league.scoring_settings;
+    // teamTier is the league-relative tier (Health + standings rank);
+    // healthScore is Roster Health, a separate 0-100 read.
     if (assess?.tier) out.teamTier = assess.tier;
     if (assess?.window) out.teamWindow = assess.window;
     if (typeof assess?.healthScore === 'number') out.healthScore = assess.healthScore;

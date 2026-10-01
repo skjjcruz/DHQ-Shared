@@ -634,11 +634,16 @@ function dhqBuildOwnerProfiles() {
     const contending = totalVal > avgTotal * 1.1 ? 'contender' : totalVal < avgTotal * 0.85 ? 'rebuilder' : 'mid-tier';
     // The app's official blended Power Score/rank for this team, so any ranking
     // Alex produces matches the brief and widget instead of re-sorting by DHQ.
-    let _oPowerScore = 0, _oPowerRank = 0;
+    let _oPowerScore = 0, _oPowerRank = 0, _oTier = '';
     try {
       const _oa = (typeof assessTeamFromGlobal === 'function') ? assessTeamFromGlobal(r.roster_id)
         : (typeof window !== 'undefined' && window.assessTeamFromGlobal) ? window.assessTeamFromGlobal(r.roster_id) : null;
-      if (_oa) { _oPowerScore = _oa.powerScore || 0; _oPowerRank = _oa.powerRank || 0; }
+      if (_oa) {
+        _oPowerScore = _oa.powerScore || 0; _oPowerRank = _oa.powerRank || 0;
+        // The engine's league-relative tier (Health + standings rank) — the
+        // same tier every surface shows. Dynasty value stays a separate read.
+        if (_oa.tier) _oTier = _oa.tier + (_oa.tierRank && _oa.tierOf ? ' (#' + _oa.tierRank + ' of ' + _oa.tierOf + ')' : '');
+      }
     } catch (e) { /* assessment optional */ }
 
     // Championship + tenure data
@@ -654,7 +659,8 @@ function dhqBuildOwnerProfiles() {
     return {
       name: name,
       record: record,
-      tier: contending,
+      tier: _oTier || contending,
+      dynastyValueTier: contending,
       dhqTotal: totalVal,
       powerScore: _oPowerScore,
       powerRank: _oPowerRank,
@@ -1193,7 +1199,9 @@ function dhqBuildPowerRankings() {
     let a = {};
     try { a = assessFn(r.roster_id) || {}; } catch (e) { a = {}; }
     const name = (S.leagueUsers || []).find(u => u.user_id === r.owner_id)?.display_name || ('Team ' + r.roster_id);
-    return { rank: a.powerRank || 0, team: name, isYou: r.roster_id === S.myRosterId, powerScore: a.powerScore || 0, tier: a.tier || '' };
+    // rank = Power rank (60% Roster Health + 40% dynasty value). tier is the
+    // league-relative win-now tier; tierRank is the team's place on THAT list.
+    return { rank: a.powerRank || 0, team: name, isYou: r.roster_id === S.myRosterId, powerScore: a.powerScore || 0, tier: a.tier || '', tierRank: a.tierRank && a.tierOf ? a.tierRank + ' of ' + a.tierOf : '', rosterHealth: a.healthScore || 0 };
   }).filter(x => x.rank > 0).sort((a, b) => a.rank - b.rank);
   return rows.length ? JSON.stringify(rows) : '';
 }

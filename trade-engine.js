@@ -43,6 +43,8 @@
 
   // ── calcOwnerPosture ───────────────────────────────────────────
   // Determine owner posture based on team assessment and DNA archetype.
+  // `tier` is the league-relative tier from assessAllTeams (Health +
+  // standings rank, 2026-10-01), so postures re-derive from it.
   // Returns one of the POSTURES objects above.
   function calcOwnerPosture(assessment, dnaKey) {
     if (!assessment) return POSTURES.NEUTRAL;
