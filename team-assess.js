@@ -1358,6 +1358,10 @@ window.App = window.App || {};
 
   // League-relative team tiers
   window.App.TeamTiers = {
+    // Tier-semantics revision. Bump when what a tier MEANS changes, so a
+    // surface that diffs a stored tier (brief-pulse "shifted from X to Y")
+    // can tell a recalibration from a real move. 1 = league-relative.
+    rev: 1,
     bandCounts: tierBandCounts,
     tierForRank: tierForRank,
     windowForTier: windowForTier,
