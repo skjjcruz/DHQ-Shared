@@ -7,7 +7,14 @@ window.App = window.App || {};
 // Version for cache invalidation — bump on deploy
 window.App.VERSION = '2026.04.02';
 
-// Tier thresholds (healthScore-based)
+// Team tiers are LEAGUE-RELATIVE (owner ruling 2026-10-01, "Option A, win-now
+// only"): teams are ranked by 50% Roster Health percentile + 50% standings
+// percentile (Health only before games / offseason) and banded by rank —
+// ELITE = top ceil(N/6), CONTENDER to 45%, CROSSROADS to 75%, REBUILDING the
+// rest. The bands live in team-assess.js (App.TeamTiers); this is a reference
+// copy. TIER_THRESHOLDS is the LEGACY absolute Health cut, still used only for
+// chopped (eliminated) teams, which sit outside the ranking.
+window.App.TIER_BANDS = { ELITE: 'ceil(N/6)', CONTENDER: 0.45, CROSSROADS: 0.75 };
 window.App.TIER_THRESHOLDS = { ELITE: 90, CONTENDER: 80, CROSSROADS: 70 };
 
 // Position colors (used across both apps)

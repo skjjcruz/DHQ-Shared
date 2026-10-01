@@ -17,6 +17,150 @@ window.App = window.App || {};
   const DEPTH_POSITIONS = ['QB', 'RB', 'WR', 'TE', 'K', 'DEF', 'DL', 'LB', 'DB'];
 
   // ─────────────────────────────────────────────────────────────
+  // League-relative team tiers (owner ruling 2026-10-01, "Option A,
+  // win-now only")
+  // ─────────────────────────────────────────────────────────────
+  // The old tier was an absolute Health cut (90/80/70). Health saturates —
+  // in a 16-team league 12 teams read ELITE — and it ignored results. The
+  // tier is now a RANK inside the league:
+  //   tierScore = 50% Roster Health percentile + 50% standings percentile
+  //               (standings = win%, then points for). Before any games are
+  //               played, or in the offseason, Health only.
+  //   ELITE      = top ceil(N/6) teams (3 of 16, 2 of 12, 3 of 18)
+  //   CONTENDER  = through round(45% of N)
+  //   CROSSROADS = through round(75% of N)
+  //   REBUILDING = the rest
+  // Dynasty value is deliberately NOT in the tier: it drives win-now
+  // decisions (trade window, Action Plan, Alex's mode). Dynasty capital has
+  // its own vital and the blended power rank.
+  // Chopped (guillotine) leagues rank only the teams still alive; an
+  // eliminated team keeps its standalone tier and gets no tier rank.
+  const TIER_STYLE = {
+    ELITE:      { color: '#D4AF37', bg: 'rgba(212,175,55,0.15)' },
+    CONTENDER:  { color: '#2ECC71', bg: 'rgba(46,204,113,0.12)' },
+    CROSSROADS: { color: '#F0A500', bg: 'rgba(240,165,0,0.12)' },
+    REBUILDING: { color: '#E74C3C', bg: 'rgba(231,76,60,0.12)' },
+  };
+  const TIER_STANDINGS_W = 0.5;
+
+  // How many of N ranked teams land in each band. Values are the LAST rank
+  // (1-based, inclusive) of each band; everything after `crossroads` rebuilds.
+  function tierBandCounts(n) {
+    n = Math.max(0, Math.floor(Number(n) || 0));
+    if (!n) return { elite: 0, contender: 0, crossroads: 0, n: 0 };
+    const elite = Math.min(n, Math.max(1, Math.ceil(n / 6)));
+    const contender = Math.min(n, Math.max(elite, Math.round(n * 0.45)));
+    const crossroads = Math.min(n, Math.max(contender, Math.round(n * 0.75)));
+    return { elite, contender, crossroads, n };
+  }
+  function tierForRank(rank, n) {
+    const b = tierBandCounts(n);
+    if (!(rank >= 1) || !b.n) return null;
+    return rank <= b.elite ? 'ELITE' : rank <= b.contender ? 'CONTENDER'
+      : rank <= b.crossroads ? 'CROSSROADS' : 'REBUILDING';
+  }
+  // The trade window is a pure function of the tier (+ panic for a
+  // CONTENDER). Every decision derived from the tier goes through here.
+  function windowForTier(tier, panic) {
+    if (tier === 'ELITE' || (tier === 'CONTENDER' && (panic || 0) <= 1)) return 'CONTENDING';
+    if (tier === 'REBUILDING') return 'REBUILDING';
+    return 'TRANSITIONING';
+  }
+  function _isEliminatedRoster(r) {
+    try {
+      const C = window.App && window.App.Chopped;
+      if (C && typeof C.isEliminated === 'function') return !!C.isEliminated(r);
+    } catch (e) { /* fall through to the native flag */ }
+    return Number(r && r.settings && r.settings.eliminated) > 0;
+  }
+  // Percentile (1 = best, 0 = worst) by a comparator where cmp(a,b) < 0
+  // means a ranks ahead. Exact ties share the average of their positions,
+  // so two identical teams always get the same percentile.
+  function _percentiles(list, cmp) {
+    const n = list.length, out = new Map();
+    const sorted = list.slice().sort(cmp);
+    for (let i = 0; i < n;) {
+      let j = i;
+      while (j + 1 < n && cmp(sorted[i], sorted[j + 1]) === 0) j++;
+      const p = n === 1 ? 1 : 1 - ((i + j) / 2) / (n - 1);
+      for (let k = i; k <= j; k++) out.set(sorted[k], p);
+      i = j + 1;
+    }
+    return out;
+  }
+  const _num = v => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  function _winPct(a) {
+    const g = _num(a.wins) + _num(a.losses) + _num(a.ties);
+    return g > 0 ? (_num(a.wins) + 0.5 * _num(a.ties)) / g : 0;
+  }
+  function _idCmp(a, b) {
+    return String(a.rosterId).localeCompare(String(b.rosterId), undefined, { numeric: true });
+  }
+
+  /**
+   * Rewrite every assessment's tier to the league-relative tier, in place.
+   * Adds: tierRank (1-based, null when eliminated), tierOf (teams ranked),
+   * tierScore (0-100 composite), tierBasis ('health+standings' | 'health'),
+   * eliminated. Re-derives window from the new tier.
+   *
+   * @param {Array}  list  - assessment objects (healthScore, weeklyPts, wins,
+   *                         losses, ties, pf, panic, rosterId[, eliminated])
+   * @param {Object} [opts] - { leagueStatus, useStandings (force on/off) }
+   * @returns {Array} the same list
+   */
+  function assignLeagueTiers(list, opts) {
+    opts = opts || {};
+    if (!Array.isArray(list) || !list.length) return list;
+    const alive = list.filter(a => a && !a.eliminated);
+    const n = alive.length;
+    const status = String(opts.leagueStatus || '').toLowerCase();
+    const offseason = status === 'complete' || status === 'pre_draft' || status === 'drafting';
+    const played = alive.some(a => (_num(a.wins) + _num(a.losses) + _num(a.ties)) > 0 || _num(a.pf) > 0);
+    const useStandings = opts.useStandings != null ? !!opts.useStandings : (played && !offseason);
+    const w = useStandings ? TIER_STANDINGS_W : 0;
+
+    // Roster Health, with the lineup's weekly points breaking a tie (Health
+    // is an integer capped at 100, so several teams commonly share it).
+    const pH = _percentiles(alive, (a, b) =>
+      (_num(b.healthScore) - _num(a.healthScore)) || (_num(b.weeklyPts) - _num(a.weeklyPts)));
+    // Standings: record (win%), then points for. A chopped league has no
+    // head-to-head record, so points for decides.
+    const pS = _percentiles(alive, (a, b) => (_winPct(b) - _winPct(a)) || (_num(b.pf) - _num(a.pf)));
+
+    const comp = new Map();
+    alive.forEach(a => comp.set(a, (1 - w) * pH.get(a) + w * pS.get(a)));
+    const order = alive.slice().sort((a, b) => {
+      const d = comp.get(b) - comp.get(a);
+      if (Math.abs(d) > 1e-9) return d;
+      return (_num(b.healthScore) - _num(a.healthScore))
+        || (pS.get(b) - pS.get(a))
+        || (_num(b.weeklyPts) - _num(a.weeklyPts))
+        || _idCmp(a, b);
+    });
+    order.forEach((a, i) => {
+      const tier = tierForRank(i + 1, n);
+      a.tier = tier;
+      a.tierColor = TIER_STYLE[tier].color;
+      a.tierBg = TIER_STYLE[tier].bg;
+      a.tierRank = i + 1;
+      a.tierOf = n;
+      a.tierScore = Math.round(comp.get(a) * 100);
+      a.tierBasis = useStandings ? 'health+standings' : 'health';
+      a.eliminated = false;
+      a.window = windowForTier(tier, a.panic);
+    });
+    list.forEach(a => {
+      if (!a || !a.eliminated) return;
+      a.tierRank = null;
+      a.tierOf = n;
+      a.tierScore = null;
+      a.tierBasis = 'eliminated';
+      a.window = windowForTier(a.tier, a.panic);
+    });
+    return list;
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // Dynamic builders — derive from league roster_positions
   // ─────────────────────────────────────────────────────────────
 
@@ -495,12 +639,13 @@ window.App = window.App || {};
     const projBonus   = weeklyPts > WEEKLY_TARGET + 10 ? 3 : weeklyPts >= WEEKLY_TARGET ? 1 : 0;
     const healthScore = Math.min(100, Math.round(scoringScore + coverageScore + projBonus));
 
-    // Tier classification — driven by health score for balanced distribution
-    let tier, tierColor, tierBg;
-    if (healthScore >= 90) { tier = 'ELITE';      tierColor = '#D4AF37'; tierBg = 'rgba(212,175,55,0.15)'; }
-    else if (healthScore >= 80) { tier = 'CONTENDER';  tierColor = '#2ECC71'; tierBg = 'rgba(46,204,113,0.12)'; }
-    else if (healthScore >= 70) { tier = 'CROSSROADS'; tierColor = '#F0A500'; tierBg = 'rgba(240,165,0,0.12)'; }
-    else                         { tier = 'REBUILDING'; tierColor = '#E74C3C'; tierBg = 'rgba(231,76,60,0.12)'; }
+    // Standalone tier — the LEGACY absolute Health cut (90/80/70). A single
+    // team has no league to rank against, so this is only a placeholder:
+    // assessAllTeams overwrites it with the league-relative tier (see
+    // assignLeagueTiers below). Only chopped/eliminated teams keep it.
+    const tier = healthScore >= 90 ? 'ELITE' : healthScore >= 80 ? 'CONTENDER'
+      : healthScore >= 70 ? 'CROSSROADS' : 'REBUILDING';
+    const tierColor = TIER_STYLE[tier].color, tierBg = TIER_STYLE[tier].bg;
 
     // Panic meter (0-5)
     let panic = 0;
@@ -513,11 +658,9 @@ window.App = window.App || {};
     if (played > 0 && losses / played > 0.6) panic += 1;
     panic = Math.min(5, panic);
 
-    // Trade window
-    let tradeWindow;
-    if      (tier === 'ELITE' || (tier === 'CONTENDER' && panic <= 1)) tradeWindow = 'CONTENDING';
-    else if (tier === 'REBUILDING')                                     tradeWindow = 'REBUILDING';
-    else                                                                tradeWindow = 'TRANSITIONING';
+    // Trade window — always derived from the tier (re-derived by
+    // assignLeagueTiers once the league-relative tier is known).
+    const tradeWindow = windowForTier(tier, panic);
 
     const needs = Object.entries(posAssessment)
       .filter(([, v]) => v.status === 'deficit' || v.status === 'thin')
@@ -656,6 +799,11 @@ window.App = window.App || {};
       })
       .forEach((a, i) => { a.powerRank = i + 1; });
 
+    // League-relative tier (and the window derived from it). Power rank
+    // above is untouched: it still blends dynasty value; the tier does not.
+    assessments.forEach(a => { a.eliminated = _isEliminatedRoster(rosterById[a.rosterId]); });
+    assignLeagueTiers(assessments, { leagueStatus: leagueInfo && leagueInfo.status });
+
     return assessments;
   }
 
@@ -683,7 +831,12 @@ window.App = window.App || {};
     const LI = window.App?.LI || window.LI || {};
     const rosters = S.rosters || [];
     let fp = '';
-    for (const r of rosters) fp += r.roster_id + ':' + ((r.players || []).join('.')) + ';';
+    // Record + points for join the signature: the league-relative tier reads
+    // standings, so a scored week must recompute even with rosters unchanged.
+    for (const r of rosters) {
+      const st = r.settings || {};
+      fp += r.roster_id + ':' + ((r.players || []).join('.')) + ':' + (st.wins || 0) + '-' + (st.losses || 0) + '-' + (st.ties || 0) + '-' + (st.fpts || 0) + ';';
+    }
     // Include data-volume fingerprints so assessments recompute when player
     // scores/stats finish loading AFTER intelligence first builds — a cached
     // partial-data pass otherwise served a wrong tier until rosters changed.
@@ -713,8 +866,9 @@ window.App = window.App || {};
   // rule was fixed, because the 8 AM pin predated the fix).
   //   v3: weakness logic overhaul · v4: roles-feed race fix ·
   //   v5: tradeable-excess strengths + engine-derived grades ·
-  //   v6: superflex QB market alignment (values feed powerScore)
-  var PIN_ENGINE_REV = 6;
+  //   v6: superflex QB market alignment (values feed powerScore) ·
+  //   v7: league-relative tiers (Health + standings rank, 2026-10-01)
+  var PIN_ENGINE_REV = 7;
   var _PIN_PREFIX = 'dhq_power_pin_v' + PIN_ENGINE_REV + ':';
 
   function _rosterFingerprint() {
@@ -1201,6 +1355,18 @@ window.App = window.App || {};
   window.App.assessTeam         = assessTeam;
   window.App.assessAllTeams     = assessAllTeams;
   window.App.buildPicksByOwner  = buildPicksByOwner;
+
+  // League-relative team tiers
+  window.App.TeamTiers = {
+    bandCounts: tierBandCounts,
+    tierForRank: tierForRank,
+    windowForTier: windowForTier,
+    assignLeagueTiers: assignLeagueTiers,
+    style: TIER_STYLE,
+    standingsWeight: TIER_STANDINGS_W,
+  };
+  window.App.assignLeagueTiers  = assignLeagueTiers;
+  window.App.windowForTier      = windowForTier;
 
   // Convenience wrappers (read from War Room Scout globals)
   window.App.buildNflStarterSetFromGlobal = buildNflStarterSetFromGlobal;
