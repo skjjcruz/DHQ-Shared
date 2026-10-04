@@ -915,6 +915,8 @@ window.OD.loadProfile = async function() {
                     products: Array.isArray(user.products) ? user.products : [],
                     platforms: data?.platformUsernames || {},
                     onboardingComplete: true,
+                    // Account creation time ("Member since"); null on older servers.
+                    memberSince: typeof user.createdAt === 'string' ? user.createdAt : null,
                 };
             }
             if (resp.status === 401) {
