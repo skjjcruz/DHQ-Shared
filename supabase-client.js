@@ -917,6 +917,8 @@ window.OD.loadProfile = async function() {
                     onboardingComplete: true,
                     // Account creation time ("Member since"); null on older servers.
                     memberSince: typeof user.createdAt === 'string' ? user.createdAt : null,
+                    // The account's avatar ({ avatarId, avatarData, updatedAt }); null when unset.
+                    ownerClub: user.ownerClub && typeof user.ownerClub === 'object' ? user.ownerClub : null,
                 };
             }
             if (resp.status === 401) {
