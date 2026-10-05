@@ -323,11 +323,16 @@
 
     // The guest lane. A device whose cache belongs to someone else is
     // cleared first, so a guest never inherits an account's leagues.
-    function beginGuest() {
+    // handle (optional): the Sleeper name the guest just typed. When it is
+    // the handle this device already holds, it is the same person coming in
+    // as a guest — their avatar, boards, saved trades and notes stay (owner
+    // ruling 2026-10-05). A different name still starts clean.
+    function beginGuest(handle) {
         var stamp = getStamp();
+        var sameOwner = !!clean(handle) && same(localHandle(), clean(handle));
         // Someone else's cache: an account/legacy stamp, or an unstamped cache
         // with no guest flag (a signed-out user of an older build).
-        if ((stamp && stamp !== 'guest') || (!stamp && get(GUEST_KEY) !== '1')) clearDeviceIdentity();
+        if (!sameOwner && ((stamp && stamp !== 'guest') || (!stamp && get(GUEST_KEY) !== '1'))) clearDeviceIdentity();
         setStamp('guest');
         set(GUEST_KEY, '1');
     }
