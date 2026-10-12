@@ -381,7 +381,7 @@ function _fwEnsureCareerPhoneCss() {
     try {
       const layers = [];
       for (let a = t; a && a.nodeType === 1; a = a.parentElement) {
-        const m = getComputedStyle(a).backgroundColor.match(/rgba?\(([^)]+)\)/);
+        const m = window.getComputedStyle(a).backgroundColor.match(/rgba?\(([^)]+)\)/);
         if (!m) continue;
         const v = m[1].split(/[\s,\/]+/).filter(Boolean).map(Number);
         const al = v.length > 3 ? v[3] : 1;
@@ -393,7 +393,7 @@ function _fwEnsureCareerPhoneCss() {
         const [r, g, b, al] = layers[i];
         out = [r * al + out[0] * (1 - al), g * al + out[1] * (1 - al), b * al + out[2] * (1 - al)];
       }
-      if (!getComputedStyle(t).getPropertyValue('--fwpm-career-sticky-bg').trim())
+      if (!window.getComputedStyle(t).getPropertyValue('--fwpm-career-sticky-bg').trim())
         t.style.setProperty('--fwpm-career-sticky-bg', `rgb(${out.map(Math.round).join(',')})`);
     } catch (err) {}
   }, true);
