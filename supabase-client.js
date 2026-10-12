@@ -2601,6 +2601,23 @@ function normalizeQueuedAnalyticsEvent(evt, username) {
             const handle = getCurrentUsername();
             if (handle && meta.sleeper == null) { meta.sleeper = String(handle).slice(0, 64); meta.guest = true; }
         } catch {}
+        // ESPN / MFL guests have no handle (owner ask 2026-10-12): carry the
+        // league + team they connected instead, so Mission Control lists them
+        // like a Sleeper guest. Public league pointers only — never the
+        // espn_s2 / SWID cookies or an MFL API key.
+        if (meta.sleeper == null && meta.guestPlatform == null) {
+            try {
+                const espn = localStorage.getItem('espn_league_id');
+                const mfl = espn ? null : localStorage.getItem('mfl_league_id');
+                if (espn || mfl) {
+                    const team = espn ? localStorage.getItem('espn_team_id') : localStorage.getItem('mfl_franchise_id');
+                    meta.guestPlatform = espn ? 'espn' : 'mfl';
+                    meta.guestLeague = String(espn || mfl).slice(0, 32);
+                    if (team) meta.guestTeam = String(team).slice(0, 32);
+                    meta.guest = true;
+                }
+            } catch {}
+        }
     }
     return {
         event_id: String(eventId),
