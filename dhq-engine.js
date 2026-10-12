@@ -1463,7 +1463,11 @@ async function loadLeagueIntel(){
 	        // D3) Explicit NFL depth chart role. This moves QB1/QB2/QB3 profiles
 	        // more aggressively than production alone, and gives smaller role
 	        // nudges to RB/WR/TE/IDP where rotations are normal.
-	        const roleAdj=_dhqDepthRole(pid,p,S,posMapLocal);
+	        // An injured player (IR / PUP / NFI) drops down or off the NFL depth
+	        // chart while he's out; that reflects the injury, not his role, and
+	        // the status layer already discounts it. No depth-chart penalty then.
+	        const roleAdjRaw=_dhqDepthRole(pid,p,S,posMapLocal);
+	        const roleAdj=statusAdj.code==='ir'&&roleAdjRaw.mult<1?{...roleAdjRaw,mult:1}:roleAdjRaw;
 	        if(roleAdj.mult!==1){sitMult*=roleAdj.mult;sf.depth*=roleAdj.mult;}
 
 	        // D4) Same-team opportunity. A young/unproven RB/WR/TE blocked by
