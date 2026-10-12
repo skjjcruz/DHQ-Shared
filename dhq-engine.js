@@ -568,6 +568,8 @@ function _dhqOpportunityAdjustment({pid,pos,age,starterSeasons,team,opportunityM
   return{mult:1,label:'',blockers:[]};
 }
 
+// Injured (IR / PUP / NFI / suspended) players: situation multiplier.
+const ST_IR_MULT=0.85;
 function _dhqStatusAdjustment({p,pos,age,peakEnd,declineEnd,seasons,curSeason,lastCompletedSeason,isRostered,hasRealTeam,isOffseasonTeams}){
   const status=String(p?.status||'').toLowerCase();
   const latest=_dhqMostRecentSeason(seasons);
@@ -575,6 +577,18 @@ function _dhqStatusAdjustment({p,pos,age,peakEnd,declineEnd,seasons,curSeason,la
   const gamesLast=Number((seasons||{})[lastDone]?.gp)||0;
   const yearsSincePlayed=latest?Math.max(0,lastDone-latest.year):99;
   const noTeam=!hasRealTeam;
+
+  // Sleeper lists players on injured reserve, PUP, NFI or a suspension as
+  // status 'Inactive' WITH an injury designation (injury_status 'IR', 'PUP',
+  // 'Sus', 'Out', ...). Those players are hurt, not retired: they keep their
+  // dynasty value with a small discount (how long they're out isn't in
+  // Sleeper, so no guess at the length). Before 2026-10-12 every 'Inactive'
+  // player was capped at 0, which wiped out the value of anyone on IR.
+  const injury=String(p?.injury_status||'').trim();
+  if(status.includes('inactive')&&!status.includes('retired')&&injury&&hasRealTeam){
+    const label=/^ir$/i.test(injury)?'On injured reserve':/^pup$/i.test(injury)?'On PUP':/^nfi$/i.test(injury)?'On the non-football injury list':/^sus/i.test(injury)?'Suspended':'Inactive ('+injury+')';
+    return{mult:ST_IR_MULT,cap:null,code:'ir',reason:label};
+  }
 
   if(status.includes('retired')||status.includes('inactive')){
     return{mult:0,cap:0,code:'inactive',reason:p?.status==='Retired'?'Retired':'Inactive'};
