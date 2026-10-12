@@ -424,9 +424,11 @@ async function callClaude(messages, useWebSearch=false, _retries=2, maxTok=600, 
       if(provider === 'anthropic'){
         const body = {model, max_tokens:maxTok, system:sys, messages};
         if(useWebSearch){body.tools=[{type:'web_search_20250305',name:'web_search'}];body.max_tokens=Math.max(maxTok,1500);}
-        const headers = {'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01'};
+        // Straight to Anthropic (2026-10-12): the member's key never passes
+        // through any server but the AI company's own.
+        const headers = {'Content-Type':'application/json','x-api-key':apiKey,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'};
         if(useWebSearch) headers['anthropic-beta'] = 'web-search-2025-03-05';
-        res = await fetchWithTimeout('https://fragrant-brook-c770.jacobcrusinberry.workers.dev/', {method:'POST', headers, body:JSON.stringify(body)});
+        res = await fetchWithTimeout('https://api.anthropic.com/v1/messages', {method:'POST', headers, body:JSON.stringify(body)});
         if((res.status===429||res.status===529)&&attempt<_retries){await new Promise(r=>setTimeout(r,(attempt+1)*10000));continue;}
         if(!res.ok){const e=await res.json().catch(()=>({}));throw new Error(e.error?.message||'API error '+res.status);}
         data = await res.json();
