@@ -1,0 +1,7 @@
+FAIL initialReadCannotMakeSecondForeignSeasonValid: AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async initialReadCannotMakeSecondForeignSeasonValid (/Users/jacobc/Projects/dhq-shared-readiness-espn/tests/espn-provider-boundaries.cjs:22:220)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn/tests/espn-provider-boundaries.cjs:39:200
+FAIL privateAccountSwitchStopsTransactionFollowup: AssertionError [ERR_ASSERTION]: Missing expected rejection.
+    at async privateAccountSwitchStopsTransactionFollowup (/Users/jacobc/Projects/dhq-shared-readiness-espn/tests/espn-provider-boundaries.cjs:23:187)
+    at async /Users/jacobc/Projects/dhq-shared-readiness-espn/tests/espn-provider-boundaries.cjs:39:200
+2 actual-provider groups; 2 failed
