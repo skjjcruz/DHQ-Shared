@@ -784,16 +784,23 @@ async function loadLeagueIntel(){
       tradeTxns=histCache.tradeTxns||[];
       bracketData=histCache.bracketData||{};
       leagueUsersHistory=histCache.leagueUsersHistory||{};
-      // Re-fetch current-season trades if cache is stale (> 6h)
+      // Re-fetch current-season trades and FAAB bids if cache is stale (> 6h).
+      // Both come from the same transaction pages; FAAB used to stay frozen
+      // at the first cached copy (2026-10-19: a returning device and the
+      // engine server counted ~20 fewer bids than a fresh build).
       const TRADE_REFRESH_TTL=6*60*60*1000;
       if(provider&&(!histCache.ts||Date.now()-histCache.ts>TRADE_REFRESH_TTL)){
         const curChain=chain.find(c=>parseInt(c.season)===curSeason);
         if(curChain){
           try{
-            const freshTrades=await provider.refreshTrades(curChain);
+            const fresh=typeof provider.getTransactions==='function'
+              ?await provider.getTransactions(curChain,curSeason)
+              :{trades:await provider.refreshTrades(curChain),faab:null};
+            const freshTrades=fresh.trades||[];
             tradeTxns=[...tradeTxns.filter(t=>parseInt(t.season)<curSeason),...freshTrades];
-            writeHistCache({...histCache,tradeTxns,ts:Date.now()});
-            console.log(`[DHQ] Fast-path trade refresh (${platform}): ${freshTrades.length} current-season trades`);
+            if(Array.isArray(fresh.faab))faabTxns=[...faabTxns.filter(f=>parseInt(f.season)<curSeason),...fresh.faab];
+            writeHistCache({...histCache,tradeTxns,faabTxns,ts:Date.now()});
+            console.log(`[DHQ] Fast-path refresh (${platform}): ${freshTrades.length} current-season trades, ${Array.isArray(fresh.faab)?fresh.faab.length:'cached'} FAAB bids`);
           }catch(e){console.warn('[DHQ] fast-path trade refresh failed:',e?.message||e);}
         }
       }
@@ -1736,6 +1743,11 @@ async function loadLeagueIntel(){
     // ═══════════════════════════════════════════════════════════════
     // STEP 9b: Trade history analysis — owner profiles + league tendencies
     // ═══════════════════════════════════════════════════════════════
+    // Newest trade first, always: the order used to follow how the history
+    // was loaded (cold build vs cached + refreshed), which flipped tie-breaks
+    // like an owner's most targeted position and which trades read "recent"
+    // (2026-10-19: device and engine server disagreed on two owners).
+    tradeTxns=(tradeTxns||[]).slice().sort((a,b)=>(Number(b.ts)||0)-(Number(a.ts)||0)||(parseInt(b.season)||0)-(parseInt(a.season)||0)||(Number(b.week)||0)-(Number(a.week)||0));
     const ownerProfiles={};
     const playerTradeHistory={};
     const leagueTradeTendencies={totalTrades:0,byPos:{},avgAssetsPerSide:0,pickHeavy:0,playerHeavy:0};
