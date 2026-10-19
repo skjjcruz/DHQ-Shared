@@ -2489,6 +2489,9 @@ Object.defineProperty(window.App, 'LI_LOADED', {
 window.App.loadLICache = loadLICache;
 window.App.saveLICache = saveLICache;
 window.App.loadLeagueIntel = loadLeagueIntel;
+// The assessment brain a fresh build runs after values land, for intel that
+// arrives already built (the Lab's server-built league, 2026-10-19).
+window.App.computeOneBrain = _dhqComputeOneBrain;
 window.App.dynastyValue = dynastyValue;
 window.App.getPlayerRank = getPlayerRank;
 window.App.isNoValue = isNoValue;

@@ -692,11 +692,19 @@
     // ("D. Bailey", "KC Concepcion"). A FULL first name must never take that
     // path — "Dominic Bailey" used to fuzzy-match David Bailey via "d bailey"
     // and inherit his consensus rank (and from there a first-round DHQ seed).
+    // It may still answer a nickname whose first name starts the other's
+    // ("Cam Ball" is Cameron Ball), never a different name that only shares
+    // the initial (Jaylen is not Jeremiah, Carlos is not CJ; 2026-10-19).
     const qFirst = stripSuffix(normName(name)).split(' ').filter(Boolean)[0] || '';
     for (const key of aliasKeys(name)) {
       const kFirst = key.split(' ')[0] || '';
-      if (kFirst.length === 1 && qFirst.length > 2) continue;
-      if (cache.byName[key]) return enrichWithDynastyValue(cache.byName[key]);
+      const hit = cache.byName[key];
+      if (!hit) continue;
+      if (kFirst.length === 1 && qFirst.length > 2) {
+        const pFirst = stripSuffix(normName(hit.name)).split(' ').filter(Boolean)[0] || '';
+        if (!(pFirst.length > 2 && (pFirst.startsWith(qFirst) || qFirst.startsWith(pFirst)))) continue;
+      }
+      return enrichWithDynastyValue(hit);
     }
     return null;
   }
